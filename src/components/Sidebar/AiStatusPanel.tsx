@@ -11,9 +11,13 @@ import { useToast } from '@/hooks/use-toast';
 import { Skeleton } from '@/components/ui/skeleton';
 import { STORAGE_KEYS, getStorageItem, setStorageItem } from '@/lib/storage';
 
-const REFRESH_INTERVAL = 10 * 60; // 10 minutes in seconds
+const REFRESH_INTERVAL = 10 * 60; // 10 minutes
 
-export default function AiStatusPanel() {
+interface AiStatusPanelProps {
+  onMarkersUpdate?: (markers: AiGeneratedCrisisReportOutput['markers']) => void;
+}
+
+export default function AiStatusPanel({ onMarkersUpdate }: AiStatusPanelProps) {
   const [report, setReport] = useState<AiGeneratedCrisisReportOutput | null>(null);
   const [loading, setLoading] = useState(false);
   const [countdown, setCountdown] = useState(REFRESH_INTERVAL);
@@ -25,29 +29,30 @@ export default function AiStatusPanel() {
       const currentDateTime = new Date().toLocaleString('pt-BR');
       const data = await generateCrisisReport({ currentDateTime });
       setReport(data);
+      if (onMarkersUpdate) onMarkersUpdate(data.markers);
       setStorageItem(STORAGE_KEYS.LAST_AI_REPORT, { ...data, lastUpdated: new Date().toISOString() });
       setCountdown(REFRESH_INTERVAL);
       toast({
-        title: "Boletim Atualizado",
-        description: "As informações da IA foram atualizadas com sucesso.",
+        title: "Dados Atualizados",
+        description: "Informações coletadas da rede em tempo real.",
       });
     } catch (error) {
       console.error(error);
       toast({
         variant: "destructive",
-        title: "Erro na Atualização",
-        description: "Serviço temporariamente indisponível. Consulte a Defesa Civil de JF.",
+        title: "Erro de Conexão",
+        description: "Não foi possível coletar dados externos agora.",
       });
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [toast, onMarkersUpdate]);
 
   useEffect(() => {
     const cached = getStorageItem<any>(STORAGE_KEYS.LAST_AI_REPORT, null);
     if (cached) {
       setReport(cached);
-      // Calculate remaining time
+      if (onMarkersUpdate) onMarkersUpdate(cached.markers);
       const lastUpdate = new Date(cached.lastUpdated).getTime();
       const now = new Date().getTime();
       const diff = Math.floor((now - lastUpdate) / 1000);
@@ -55,7 +60,7 @@ export default function AiStatusPanel() {
     } else {
       fetchReport();
     }
-  }, [fetchReport]);
+  }, [fetchReport, onMarkersUpdate]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -78,10 +83,10 @@ export default function AiStatusPanel() {
 
   const getAlertColor = (level: string) => {
     switch (level) {
-      case 'VERDE': return 'bg-green-500 hover:bg-green-600';
-      case 'AMARELO': return 'bg-yellow-500 hover:bg-yellow-600';
-      case 'LARANJA': return 'bg-orange-500 hover:bg-orange-600';
-      case 'VERMELHO': return 'bg-red-500 hover:bg-red-600';
+      case 'VERDE': return 'bg-green-500';
+      case 'AMARELO': return 'bg-yellow-500';
+      case 'LARANJA': return 'bg-orange-500';
+      case 'VERMELHO': return 'bg-red-500';
       default: return 'bg-slate-500';
     }
   };
@@ -92,7 +97,7 @@ export default function AiStatusPanel() {
         <div className="flex items-center justify-between">
           <CardTitle className="text-lg font-headline flex items-center gap-2">
             <AlertTriangle className="text-primary w-5 h-5" />
-            Situação em Tempo Real
+            Dados em Tempo Real
           </CardTitle>
           <Button variant="ghost" size="icon" onClick={fetchReport} disabled={loading} className="h-8 w-8">
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -115,21 +120,21 @@ export default function AiStatusPanel() {
               </Badge>
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Clock className="w-3 h-3" />
-                Próxima atualização em {formatTime(countdown)}
+                Ciclo de 10min: {formatTime(countdown)}
               </div>
             </div>
 
             <div className="space-y-2">
-              <h4 className="text-sm font-semibold text-primary uppercase tracking-wider">Resumo da Situação</h4>
+              <h4 className="text-xs font-bold text-primary uppercase tracking-widest">Boletim Informativo</h4>
               <p className="text-sm leading-relaxed text-slate-300">
                 {report.summary}
               </p>
             </div>
 
             <div className="space-y-2">
-              <h4 className="text-sm font-semibold text-primary uppercase tracking-wider flex items-center gap-2">
+              <h4 className="text-xs font-bold text-primary uppercase tracking-widest flex items-center gap-2">
                 <MapPin className="w-4 h-4" />
-                Áreas Afetadas
+                Zonas com Ocorrências
               </h4>
               <div className="flex flex-wrap gap-2">
                 {report.affectedAreas.map((area, i) => (
@@ -141,14 +146,14 @@ export default function AiStatusPanel() {
             </div>
 
             <div className="space-y-3">
-              <h4 className="text-sm font-semibold text-primary uppercase tracking-wider flex items-center gap-2">
+              <h4 className="text-xs font-bold text-primary uppercase tracking-widest flex items-center gap-2">
                 <ShieldCheck className="w-4 h-4" />
-                Recomendações
+                Medidas de Segurança
               </h4>
               <ul className="space-y-2">
                 {report.recommendations.map((rec, i) => (
                   <li key={i} className="text-sm text-slate-300 flex gap-2">
-                    <span className="text-primary">•</span>
+                    <span className="text-primary font-bold">•</span>
                     {rec}
                   </li>
                 ))}
@@ -157,14 +162,13 @@ export default function AiStatusPanel() {
           </div>
         ) : (
           <div className="text-center py-12 text-muted-foreground">
-            <p>Nenhum dado disponível.</p>
-            <Button variant="link" onClick={fetchReport}>Tentar novamente</Button>
+            <p>Aguardando dados da rede...</p>
           </div>
         )}
       </CardContent>
 
       <div className="p-4 bg-slate-900/80 border-t text-[10px] text-muted-foreground text-center">
-        Informações geradas por IA. Em caso de emergência, ligue 193 ou 199.
+        Atualização automática a cada 10 minutos via monitoramento IA.
       </div>
     </Card>
   );

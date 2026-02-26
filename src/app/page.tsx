@@ -8,9 +8,8 @@ import Footer from '@/components/Layout/Footer';
 import AiStatusPanel from '@/components/Sidebar/AiStatusPanel';
 import ReportDialog from '@/components/Reports/ReportDialog';
 import DonationManager from '@/components/Donations/DonationManager';
-import { CommunityReport } from '@/types';
+import { CommunityReport, AiMarker } from '@/types';
 import { STORAGE_KEYS, getStorageItem, setStorageItem } from '@/lib/storage';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Map as MapIcon, Heart, Info, Layers } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -24,6 +23,7 @@ const EmergencyMap = dynamic(() => import('@/components/Map/DynamicMap'), {
 
 export default function Home() {
   const [reports, setReports] = useState<CommunityReport[]>([]);
+  const [aiMarkers, setAiMarkers] = useState<AiMarker[]>([]);
   const [activeTab, setActiveTab] = useState('map');
   const [layers, setLayers] = useState({
     risk: true,
@@ -41,6 +41,10 @@ export default function Home() {
     const updated = [report, ...reports];
     setReports(updated);
     setStorageItem(STORAGE_KEYS.REPORTS, updated);
+  };
+
+  const handleAiMarkersUpdate = (markers: AiMarker[]) => {
+    setAiMarkers(markers);
   };
 
   const toggleLayer = (key: keyof typeof layers) => {
@@ -78,33 +82,32 @@ export default function Home() {
           </Button>
         </div>
 
-        {/* Desktop Layout: Left Info/Donations Sidebar (Collapsible) */}
+        {/* Desktop Layout: Left Sidebar */}
         <div className="hidden lg:block w-80 border-r border-slate-800 bg-slate-900/50">
           <DonationManager />
         </div>
 
         {/* Main Center Content: Map */}
         <div className={`flex-1 relative ${activeTab === 'map' ? 'block' : 'hidden md:block'}`}>
-          <EmergencyMap reports={reports} layers={layers} />
+          <EmergencyMap reports={reports} aiMarkers={aiMarkers} layers={layers} />
           
-          {/* Map Layer Controls */}
           <div className="absolute top-4 left-4 z-[400] flex flex-col gap-2">
             <Popover>
               <PopoverTrigger asChild>
-                <Button size="icon" className="bg-slate-900/90 border-slate-700 shadow-xl hover:bg-slate-800">
+                <Button size="icon" className="bg-slate-900/90 border-slate-700 shadow-xl">
                   <Layers className="w-5 h-5 text-primary" />
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-56 bg-slate-900/95 border-slate-700 p-4" side="right" align="start">
-                <h4 className="font-bold text-sm mb-4 text-slate-100">Camadas do Mapa</h4>
+                <h4 className="font-bold text-sm mb-4 text-slate-100 uppercase tracking-widest">Filtros do Mapa</h4>
                 <div className="space-y-4">
                   <div className="flex items-center space-x-2">
                     <Checkbox id="risk" checked={layers.risk} onCheckedChange={() => toggleLayer('risk')} />
-                    <Label htmlFor="risk" className="text-xs text-slate-200">Zonas de Risco (JF)</Label>
+                    <Label htmlFor="risk" className="text-xs text-slate-200">Zonas de Risco Geológico</Label>
                   </div>
                   <div className="flex items-center space-x-2">
                     <Checkbox id="safe" checked={layers.safe} onCheckedChange={() => toggleLayer('safe')} />
-                    <Label htmlFor="safe" className="text-xs text-slate-200">Abrigos Seguros</Label>
+                    <Label htmlFor="safe" className="text-xs text-slate-200">Abrigos Públicos</Label>
                   </div>
                   <div className="flex items-center space-x-2">
                     <Checkbox id="donations" checked={layers.donations} onCheckedChange={() => toggleLayer('donations')} />
@@ -112,7 +115,7 @@ export default function Home() {
                   </div>
                   <div className="flex items-center space-x-2">
                     <Checkbox id="community" checked={layers.community} onCheckedChange={() => toggleLayer('community')} />
-                    <Label htmlFor="community" className="text-xs text-slate-200">Relatos da Comunidade</Label>
+                    <Label htmlFor="community" className="text-xs text-slate-200">Alertas em Tempo Real (IA)</Label>
                   </div>
                 </div>
               </PopoverContent>
@@ -122,7 +125,7 @@ export default function Home() {
 
         {/* Desktop Layout: Right AI Sidebar */}
         <div className="hidden md:block w-80 lg:w-96 border-l border-slate-800">
-          <AiStatusPanel />
+          <AiStatusPanel onMarkersUpdate={handleAiMarkersUpdate} />
         </div>
 
         {/* Mobile View Contents */}
@@ -130,7 +133,7 @@ export default function Home() {
           <DonationManager />
         </div>
         <div className={`flex-1 md:hidden ${activeTab === 'info' ? 'block' : 'hidden'}`}>
-          <AiStatusPanel />
+          <AiStatusPanel onMarkersUpdate={handleAiMarkersUpdate} />
         </div>
 
         {/* Community Report Trigger */}

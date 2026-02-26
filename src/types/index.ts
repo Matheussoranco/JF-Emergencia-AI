@@ -6,7 +6,7 @@ export interface Location {
   name: string;
   lat: number;
   lng: number;
-  type: 'SAFE_ZONE' | 'DONATION_POINT' | 'RISK_ZONE';
+  type: 'SAFE_ZONE' | 'DONATION_POINT' | 'RISK_ZONE' | 'AI_REPORT';
   status?: string;
   capacity?: string;
   acceptedItems?: string[];
@@ -14,6 +14,8 @@ export interface Location {
   phone?: string;
   openHours?: string;
   lastUpdated?: string;
+  description?: string;
+  severity?: number;
 }
 
 export interface RiskZone {
@@ -34,10 +36,19 @@ export interface CommunityReport {
   timestamp: string;
 }
 
+export interface AiMarker {
+  lat: number;
+  lng: number;
+  description: string;
+  type: 'alagamento' | 'deslizamento' | 'bloqueio' | 'atencao';
+  severity: number;
+}
+
 export interface CrisisReport {
   summary: string;
   alertLevel: AlertLevel;
   affectedAreas: string[];
   recommendations: string[];
+  markers: AiMarker[];
   lastUpdated: string;
 }

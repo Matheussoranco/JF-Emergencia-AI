@@ -4,13 +4,12 @@
 import { useEffect, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { MapContainer, TileLayer, Marker, Popup, Polygon, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polygon } from 'react-leaflet';
 import { JF_CENTER, RISK_ZONES, SAFE_ZONES, DONATION_POINTS } from '@/data/seed-data';
-import { CommunityReport, Location } from '@/types';
-import { ShieldAlert, Home, Heart, AlertTriangle } from 'lucide-react';
+import { CommunityReport, AiMarker } from '@/types';
+import { ShieldAlert, Home, Heart, AlertTriangle, Cpu } from 'lucide-react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-// Fix for default marker icons in Leaflet with Next.js
 const createIcon = (color: string, IconComponent: any) => {
   const iconHtml = renderToStaticMarkup(
     <div className="relative flex items-center justify-center">
@@ -34,9 +33,11 @@ const SafeIcon = createIcon('#4CAF50', Home);
 const RiskIcon = createIcon('#F23D3D', ShieldAlert);
 const DonationIcon = createIcon('#55C6F7', Heart);
 const ReportIcon = createIcon('#F2C317', AlertTriangle);
+const AiIcon = createIcon('#F23D3D', Cpu);
 
 interface MapProps {
   reports: CommunityReport[];
+  aiMarkers?: AiMarker[];
   layers: {
     risk: boolean;
     safe: boolean;
@@ -45,7 +46,7 @@ interface MapProps {
   };
 }
 
-export default function EmergencyMap({ reports, layers }: MapProps) {
+export default function EmergencyMap({ reports, aiMarkers = [], layers }: MapProps) {
   const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
@@ -80,7 +81,7 @@ export default function EmergencyMap({ reports, layers }: MapProps) {
           <Popup>
             <div className="p-1">
               <h3 className="font-bold text-red-500">{zone.name}</h3>
-              <p className="text-sm">Zona de Risco de Alagamento</p>
+              <p className="text-sm">Zona de Risco Geológico</p>
               <p className="text-xs mt-1">Severidade: {zone.severity}/3</p>
             </div>
           </Popup>
@@ -95,7 +96,6 @@ export default function EmergencyMap({ reports, layers }: MapProps) {
               <p className="text-sm text-foreground">Status: <span className="font-medium">{zone.status}</span></p>
               <p className="text-sm text-foreground">Capacidade: {zone.capacity}</p>
               <p className="text-xs text-muted-foreground mt-1">{zone.address}</p>
-              <p className="text-[10px] text-muted-foreground">Atualizado: {zone.lastUpdated}</p>
             </div>
           </Popup>
         </Marker>
@@ -111,8 +111,6 @@ export default function EmergencyMap({ reports, layers }: MapProps) {
                 {point.acceptedItems?.map(item => <li key={item}>{item}</li>)}
               </ul>
               <p className="text-xs mt-2 text-foreground">{point.address}</p>
-              <p className="text-xs font-medium text-foreground">{point.phone}</p>
-              <p className="text-[10px] text-muted-foreground">Horário: {point.openHours}</p>
             </div>
           </Popup>
         </Marker>
@@ -128,6 +126,24 @@ export default function EmergencyMap({ reports, layers }: MapProps) {
               <p className="text-xs mt-2 text-muted-foreground">
                 {new Date(report.timestamp).toLocaleString('pt-BR')}
               </p>
+            </div>
+          </Popup>
+        </Marker>
+      ))}
+
+      {/* AI Generated Real-time Markers */}
+      {aiMarkers.map((marker, idx) => (
+        <Marker key={`ai-${idx}`} position={[marker.lat, marker.lng]} icon={AiIcon}>
+          <Popup>
+            <div className="p-1 max-w-[200px]">
+              <div className="flex items-center gap-2 mb-1">
+                <Badge variant="destructive" className="text-[8px] h-4 py-0">INFO IA</Badge>
+                <h3 className="font-bold text-red-500 text-sm uppercase">{marker.type}</h3>
+              </div>
+              <p className="text-xs text-foreground font-medium">{marker.description}</p>
+              <div className="mt-2 pt-2 border-t border-slate-700 flex justify-between items-center">
+                <span className="text-[9px] text-muted-foreground">Nível de Risco: {marker.severity}/3</span>
+              </div>
             </div>
           </Popup>
         </Marker>
