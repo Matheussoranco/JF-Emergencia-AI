@@ -1,3 +1,4 @@
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -47,11 +48,20 @@
   scrollbar-width: none;
 }
 
+/* Isolamento do Mapa para evitar sobreposição da UI */
 .leaflet-container {
   width: 100% !important;
   height: 100% !important;
   background: #0f172a !important;
-  z-index: 1 !important;
+  z-index: 0 !important;
+}
+
+.leaflet-pane {
+  z-index: 0 !important;
+}
+
+.leaflet-top, .leaflet-bottom {
+  z-index: 10 !important;
 }
 
 .pulse-red {
@@ -65,24 +75,19 @@
   100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
 }
 
-/* Garante que o mapa não sobreponha a UI fixa */
-.leaflet-pane {
-  z-index: 1 !important;
-}
-
-.leaflet-top, .leaflet-bottom {
-  z-index: 100 !important;
-}
-
-/* UI Elevada */
-[role="dialog"] {
-  z-index: 1500 !important;
+/* UI Elevada para garantir acessibilidade sobre o mapa */
+[role="dialog"], .radix-dialog-content {
+  z-index: 2000 !important;
 }
 
 nav {
-  z-index: 1400 !important;
+  z-index: 1500 !important;
 }
 
 .fixed.bottom-28 {
-  z-index: 1350 !important;
+  z-index: 1450 !important;
+}
+
+header, footer {
+  z-index: 1500 !important;
 }
