@@ -11,9 +11,9 @@ import { CommunityReport, AiMarker, AlertLevel, Location } from '@/types';
 import { STORAGE_KEYS, getStorageItem, setStorageItem } from '@/lib/storage';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
-import { Plus, List, Heart, Cpu, MapPin, ExternalLink, Phone } from 'lucide-react';
+import { Plus, List, Heart, Cpu, MapPin, ExternalLink } from 'lucide-react';
 import { DONATION_POINTS } from '@/data/seed-data';
-import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 
 const EmergencyMap = dynamic(() => import('@/components/Map/DynamicMap'), { 
@@ -47,8 +47,9 @@ export default function Home() {
         <div className="flex-1 lg:flex-[0.65] relative h-full">
           <EmergencyMap reports={reports} aiMarkers={aiMarkers} />
           <Button 
-            className="fixed bottom-28 right-6 lg:absolute lg:bottom-6 lg:right-6 w-14 h-14 rounded-full bg-red-600 hover:bg-red-700 shadow-2xl z-[400] pulse-red p-0"
+            className="fixed bottom-28 right-6 lg:absolute lg:bottom-6 lg:right-6 w-14 h-14 rounded-full bg-red-600 hover:bg-red-700 shadow-2xl z-[1050] pulse-red p-0"
             onClick={() => setIsReportOpen(true)}
+            aria-label="Novo Relato"
           >
             <Plus size={32} strokeWidth={3} />
           </Button>
@@ -71,14 +72,14 @@ export default function Home() {
           </Tabs>
         </div>
 
-        {/* MOBILE BOTTOM SHEET */}
-        <div className="lg:hidden fixed bottom-12 left-0 right-0 h-10 bg-slate-900 border-t border-slate-800 flex items-center justify-around z-40">
-           <button onClick={() => setActiveTab('situacao')} className={`flex flex-col items-center flex-1 py-1 transition-colors ${activeTab === 'situacao' ? 'text-red-500' : 'text-slate-500'}`}><Cpu size={18}/><span className="text-[8px] font-black uppercase tracking-tighter">IA</span></button>
-           <button onClick={() => setActiveTab('relatos')} className={`flex flex-col items-center flex-1 py-1 transition-colors ${activeTab === 'relatos' ? 'text-red-500' : 'text-slate-500'}`}><List size={18}/><span className="text-[8px] font-black uppercase tracking-tighter">RELATOS</span></button>
-           <button onClick={() => setActiveTab('doacoes')} className={`flex flex-col items-center flex-1 py-1 transition-colors ${activeTab === 'doacoes' ? 'text-red-500' : 'text-slate-500'}`}><Heart size={18}/><span className="text-[8px] font-black uppercase tracking-tighter">DOAÇÕES</span></button>
+        {/* MOBILE BOTTOM SHEET TRIGGER BAR */}
+        <div className="lg:hidden fixed bottom-12 left-0 right-0 h-10 bg-slate-900 border-t border-slate-800 flex items-center justify-around z-[1080]">
+           <button onClick={() => setActiveTab('situacao')} className={`flex flex-col items-center flex-1 py-1 transition-colors ${activeTab === 'situacao' ? 'text-red-500' : 'text-slate-500'}`} aria-label="Aba Situação"><Cpu size={18}/><span className="text-[8px] font-black uppercase tracking-tighter">IA</span></button>
+           <button onClick={() => setActiveTab('relatos')} className={`flex flex-col items-center flex-1 py-1 transition-colors ${activeTab === 'relatos' ? 'text-red-500' : 'text-slate-500'}`} aria-label="Aba Relatos"><List size={18}/><span className="text-[8px] font-black uppercase tracking-tighter">RELATOS</span></button>
+           <button onClick={() => setActiveTab('doacoes')} className={`flex flex-col items-center flex-1 py-1 transition-colors ${activeTab === 'doacoes' ? 'text-red-500' : 'text-slate-500'}`} aria-label="Aba Doações"><Heart size={18}/><span className="text-[8px] font-black uppercase tracking-tighter">DOAÇÕES</span></button>
         </div>
 
-        <div className={`lg:hidden fixed inset-x-0 bottom-12 transition-all duration-500 z-[450] bg-slate-900 rounded-t-2xl border-t border-slate-800 shadow-2xl ${activeTab ? 'h-[45dvh]' : 'h-0 translate-y-full'}`}>
+        <div className={`lg:hidden fixed inset-x-0 bottom-12 transition-all duration-500 z-[1090] bg-slate-900 rounded-t-2xl border-t border-slate-800 shadow-2xl ${activeTab ? 'h-[45dvh]' : 'h-0 translate-y-full'}`}>
            <div className="w-12 h-1 bg-slate-700 rounded-full mx-auto my-3" />
            <div className="h-full overflow-hidden">
               {activeTab === 'situacao' && <AiStatusPanel onMarkersUpdate={setAiMarkers} onAlertChange={setAlertLevel} />}

@@ -35,7 +35,7 @@ export default function Navbar({ alertLevel = 'VERDE' }: NavbarProps) {
 
   return (
     <>
-      <nav className="h-14 border-b bg-slate-900 flex items-center justify-between px-4 fixed top-0 w-full z-50">
+      <nav className="h-14 border-b bg-slate-900 flex items-center justify-between px-4 fixed top-0 w-full z-[1100]">
         <div className="flex items-center gap-2">
           <ShieldAlert className="text-red-600 w-6 h-6" />
           <h1 className="text-lg font-black text-white tracking-tighter uppercase">JF Alerta</h1>

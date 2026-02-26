@@ -12,7 +12,7 @@ const EMERGENCY_CONTACTS = [
 
 export default function Footer() {
   return (
-    <footer className="h-12 fixed bottom-0 left-0 right-0 z-50 bg-[#450a0a] flex items-center overflow-x-auto no-scrollbar px-4 gap-4">
+    <footer className="h-12 fixed bottom-0 left-0 right-0 z-[1100] bg-[#450a0a] flex items-center overflow-x-auto no-scrollbar px-4 gap-4">
       <div className="flex items-center gap-6 min-w-max">
         {EMERGENCY_CONTACTS.map((contact) => (
           <a
