@@ -30,6 +30,18 @@ const AiGeneratedCrisisReportOutputSchema = z.object({
 
 export type AiGeneratedCrisisReportOutput = z.infer<typeof AiGeneratedCrisisReportOutputSchema>;
 
+const FALLBACK_REPORT: AiGeneratedCrisisReportOutput = {
+  summary: "O sistema de IA está temporariamente indisponível para análise detalhada. Baseie-se nos dados meteorológicos brutos e canais oficiais. Possível causa: chave de API inválida ou sobrecarga do serviço.",
+  alertLevel: "AMARELO",
+  affectedAreas: [],
+  recommendations: [
+    "Acompanhe os alertas da Defesa Civil por SMS (40199).",
+    "Evite transitar por áreas de risco em caso de chuva forte.",
+    "Em emergência, ligue 199 ou 193."
+  ],
+  markers: []
+};
+
 // ── Fase 1: Dados meteorológicos reais (Open-Meteo – gratuito, sem API key) ─
 async function fetchWeatherData(): Promise<string> {
   try {
@@ -124,7 +136,7 @@ function getWmoDescription(code: number): string {
 async function fetchCrisisNews(currentDateTime: string): Promise<string> {
   try {
     const searchResponse = await ai.generate({
-      model: 'googleai/gemini-1.5-flash-002',
+      model: 'googleai/gemini-1.5-flash',
       prompt: `Pesquise e resuma as informacoes MAIS RECENTES e VERIFICAVEIS sobre a situacao em Juiz de Fora, MG, Brasil, especificamente:
 
 1. Chuvas e enchentes: Chuvas intensas, alagamentos, transbordamento de rios (Paraibuna, corregos)
@@ -164,16 +176,17 @@ Analise sera baseada apenas nos dados meteorologicos medidos.`;
 
 // ── Fase 3: Geração do relatório estruturado factual ────────────────
 export async function generateCrisisReport(input: { currentDateTime: string }): Promise<AiGeneratedCrisisReportOutput> {
-  // Coleta dados em paralelo: weather (gratuito) + news (via Gemini Search)
-  const [weatherData, crisisNews] = await Promise.all([
-    fetchWeatherData(),
-    fetchCrisisNews(input.currentDateTime),
-  ]);
+  try {
+    // Coleta dados em paralelo: weather (gratuito) + news (via Gemini Search)
+    const [weatherData, crisisNews] = await Promise.all([
+      fetchWeatherData(),
+      fetchCrisisNews(input.currentDateTime),
+    ]);
 
-  const { output } = await ai.generate({
-    model: 'googleai/gemini-1.5-flash-002',
-    output: { schema: AiGeneratedCrisisReportOutputSchema },
-    prompt: `Voce e o Sistema de Monitoramento Inteligente da Defesa Civil de Juiz de Fora, MG.
+    const { output } = await ai.generate({
+      model: 'googleai/gemini-1.5-flash',
+      output: { schema: AiGeneratedCrisisReportOutputSchema },
+      prompt: `Voce e o Sistema de Monitoramento Inteligente da Defesa Civil de Juiz de Fora, MG.
 Analise os DADOS REAIS abaixo e gere um boletim ESTRITAMENTE FACTUAL.
 
 ${weatherData}
@@ -215,18 +228,25 @@ REGRAS INVIOLAVEIS PARA O RELATORIO:
 8. Nunca diga "de acordo com a simulacao" ou "dados simulados". Estes sao DADOS REAIS MEDIDOS.
 
 Data/hora: ${input.currentDateTime}`,
-  });
+    });
 
-  if (!output) {
-    throw new Error('IA nao retornou dados estruturados. Verifique a chave GOOGLE_GENAI_API_KEY no arquivo .env.local');
+    if (!output) {
+      console.error('[generateCrisisReport] Falha: IA retornou output vazio.');
+      return FALLBACK_REPORT;
+    }
+
+    // Validacao de seguranca dos markers (coordenadas dentro de JF)
+    output.markers = (output.markers ?? []).filter(m =>
+      m.lat >= -21.85 && m.lat <= -21.65 &&
+      m.lng >= -43.50 && m.lng <= -43.25 &&
+      m.severity >= 1 && m.severity <= 3
+    );
+
+    return output;
+
+  } catch (error: any) {
+    console.error('[generateCrisisReport] Erro fatal:', error);
+    // Em caso de erro na geração (ex: API key invalida, erro de rede, quota), retorna fallback
+    return FALLBACK_REPORT;
   }
-
-  // Validacao de seguranca dos markers (coordenadas dentro de JF)
-  output.markers = (output.markers ?? []).filter(m =>
-    m.lat >= -21.85 && m.lat <= -21.65 &&
-    m.lng >= -43.50 && m.lng <= -43.25 &&
-    m.severity >= 1 && m.severity <= 3
-  );
-
-  return output;
 }
