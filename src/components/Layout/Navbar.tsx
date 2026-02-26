@@ -25,11 +25,21 @@ export default function Navbar({ alertLevel = 'VERDE' }: NavbarProps) {
 
   const getAlertStyles = (level: AlertLevel) => {
     switch (level) {
-      case 'VERDE': return 'bg-[#14532d] text-[#4ade80] border-[#16a34a]';
-      case 'AMARELO': return 'bg-[#713f12] text-[#fbbf24] border-[#d97706]';
-      case 'LARANJA': return 'bg-[#7c2d12] text-[#fb923c] border-[#ea580c]';
-      case 'VERMELHO': return 'bg-[#450a0a] text-[#f87171] border-[#dc2626] pulse-red';
-      default: return '';
+      case 'VERDE': return 'bg-[#064e3b] text-[#10b981] border-[#059669]';
+      case 'AMARELO': return 'bg-[#451a03] text-[#f59e0b] border-[#d97706]';
+      case 'LARANJA': return 'bg-[#431407] text-[#f97316] border-[#ea580c]';
+      case 'VERMELHO': return 'bg-[#450a0a] text-[#ef4444] border-[#dc2626] pulse-red';
+      default: return 'bg-slate-800 text-slate-400 border-slate-700';
+    }
+  };
+
+  const getIconColor = (level: AlertLevel) => {
+    switch (level) {
+      case 'VERDE': return 'text-emerald-500';
+      case 'AMARELO': return 'text-amber-500';
+      case 'LARANJA': return 'text-orange-500';
+      case 'VERMELHO': return 'text-red-600';
+      default: return 'text-slate-400';
     }
   };
 
@@ -37,7 +47,7 @@ export default function Navbar({ alertLevel = 'VERDE' }: NavbarProps) {
     <>
       <nav className="h-14 border-b bg-slate-900 flex items-center justify-between px-4 fixed top-0 w-full z-[1400]">
         <div className="flex items-center gap-2">
-          <ShieldAlert className="text-red-600 w-6 h-6" />
+          <ShieldAlert className={`${getIconColor(alertLevel)} w-6 h-6 transition-colors duration-500`} />
           <h1 className="text-lg font-black text-white tracking-tighter uppercase">JF Alerta</h1>
         </div>
 
@@ -45,7 +55,7 @@ export default function Navbar({ alertLevel = 'VERDE' }: NavbarProps) {
           <span className="hidden sm:flex items-center gap-1 text-[10px] text-slate-400 font-black uppercase">
             <Clock size={12} /> {time}
           </span>
-          <Badge className={`text-[10px] font-black uppercase px-2 py-0.5 border {getAlertStyles(alertLevel)}`}>
+          <Badge className={`text-[10px] font-black uppercase px-2 py-0.5 border ${getAlertStyles(alertLevel)} transition-all duration-500`}>
             {alertLevel}
           </Badge>
           <Button variant="ghost" size="icon" className="text-slate-400 h-9 w-9" onClick={() => setIsSettingsOpen(true)}>

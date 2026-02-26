@@ -1,17 +1,17 @@
 
-"use client";
+'use client';
 
 import { useState, useEffect, useCallback, startTransition } from 'react';
 import { generateCrisisReport, AiGeneratedCrisisReportOutput } from '@/ai/flows/ai-generated-crisis-report-flow';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, Clock, AlertTriangle, ShieldCheck, MapPin, Cpu } from 'lucide-react';
+import { RefreshCw, Clock, AlertTriangle, ShieldCheck, MapPin, Cpu, Radio } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Skeleton } from '@/components/ui/skeleton';
 import { STORAGE_KEYS, getStorageItem, setStorageItem } from '@/lib/storage';
 
-const REFRESH_INTERVAL = 10 * 60; // 10 minutos
+const REFRESH_INTERVAL = 5 * 60; // Reduzido para 5 minutos para maior agilidade
 
 interface AiStatusPanelProps {
   onMarkersUpdate?: (markers: AiGeneratedCrisisReportOutput['markers']) => void;
@@ -19,7 +19,7 @@ interface AiStatusPanelProps {
 }
 
 export default function AiStatusPanel({ onMarkersUpdate, onAlertChange }: AiStatusPanelProps) {
-  const [report, setReport] = useState<AiGeneratedCrisisReportOutput | null>(null);
+  const [report, setReport] = useState<(AiGeneratedCrisisReportOutput & { lastUpdated?: string }) | null>(null);
   const [loading, setLoading] = useState(false);
   const [countdown, setCountdown] = useState(REFRESH_INTERVAL);
   const { toast } = useToast();
@@ -32,18 +32,21 @@ export default function AiStatusPanel({ onMarkersUpdate, onAlertChange }: AiStat
         currentDateTime: new Date().toLocaleString('pt-BR') 
       });
       
+      const timestamp = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      
       startTransition(() => {
-        setReport(data);
+        const enrichedReport = { ...data, lastUpdated: timestamp };
+        setReport(enrichedReport);
         if (onMarkersUpdate) onMarkersUpdate(data.markers);
         if (onAlertChange) onAlertChange(data.alertLevel);
-        setStorageItem(STORAGE_KEYS.LAST_AI_REPORT, { ...data, lastUpdated: new Date().toISOString() });
+        setStorageItem(STORAGE_KEYS.LAST_AI_REPORT, { ...enrichedReport, storageTimestamp: new Date().toISOString() });
         setCountdown(REFRESH_INTERVAL);
       });
     } catch (error) {
       toast({ 
         variant: "destructive", 
         title: "Erro de IA", 
-        description: "Falha ao atualizar boletim inteligente. Tente novamente mais tarde." 
+        description: "Falha ao sincronizar boletim factual." 
       });
     } finally {
       setLoading(false);
@@ -56,12 +59,12 @@ export default function AiStatusPanel({ onMarkersUpdate, onAlertChange }: AiStat
       setReport(cached);
       if (onMarkersUpdate) onMarkersUpdate(cached.markers);
       if (onAlertChange) onAlertChange(cached.alertLevel);
-      const diff = Math.floor((Date.now() - new Date(cached.lastUpdated).getTime()) / 1000);
+      const diff = Math.floor((Date.now() - new Date(cached.storageTimestamp).getTime()) / 1000);
       setCountdown(Math.max(0, REFRESH_INTERVAL - diff));
     } else {
       fetchReport();
     }
-  }, []); // Só no mount inicial
+  }, []);
 
   useEffect(() => {
     if (countdown <= 0 && !loading) {
@@ -78,70 +81,95 @@ export default function AiStatusPanel({ onMarkersUpdate, onAlertChange }: AiStat
 
   const formatTime = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
 
+  const getAlertBadgeColor = (level: string) => {
+    switch (level) {
+      case 'VERDE': return 'bg-emerald-600';
+      case 'AMARELO': return 'bg-amber-600';
+      case 'LARANJA': return 'bg-orange-600';
+      case 'VERMELHO': return 'bg-red-600 pulse-red';
+      default: return 'bg-slate-600';
+    }
+  };
+
   return (
-    <div className="h-full flex flex-col p-4 space-y-6 overflow-y-auto no-scrollbar">
+    <div className="h-full flex flex-col p-4 space-y-5 overflow-y-auto no-scrollbar">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-black flex items-center gap-2 uppercase tracking-tighter">
-          <Cpu className="text-red-600" /> Situação Atual
+          <Cpu className="text-red-600" /> MONITORAMENTO IA
         </h2>
-        <Button 
-          variant="ghost" 
-          size="icon" 
-          onClick={fetchReport} 
-          disabled={loading} 
-          className="h-8 w-8 text-slate-500"
-          aria-label="Atualizar agora"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-        </Button>
+        <div className="flex items-center gap-2">
+           {loading && <Radio className="w-4 h-4 text-emerald-500 animate-pulse" />}
+           <Button 
+            variant="ghost" 
+            size="icon" 
+            onClick={fetchReport} 
+            disabled={loading} 
+            className="h-8 w-8 text-slate-500 hover:bg-slate-800"
+            aria-label="Atualizar agora"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-red-500' : ''}`} />
+          </Button>
+        </div>
       </div>
 
       {loading && !report ? (
         <div className="space-y-4">
-          <Skeleton className="h-20 w-full bg-slate-800" />
-          <Skeleton className="h-40 w-full bg-slate-800" />
+          <Skeleton className="h-20 w-full bg-slate-800/50" />
+          <Skeleton className="h-40 w-full bg-slate-800/50" />
         </div>
       ) : report ? (
-        <div className="space-y-6" role="alert">
-          <div className="flex items-center justify-between bg-slate-800/50 p-3 rounded-lg border border-slate-700">
-            <Badge className="bg-red-600 text-white font-black text-xs uppercase px-2 py-1">ALERTA {report.alertLevel}</Badge>
-            <span className="text-[10px] font-mono text-slate-500">PRÓXIMA: {formatTime(countdown)}</span>
-          </div>
-
-          <div className="space-y-2">
-            <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Boletim Factual (Gemini)</h3>
-            <p className="text-sm text-slate-300 leading-relaxed font-medium">{report.summary}</p>
-          </div>
-
-          <div className="space-y-3">
-            <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
-              <MapPin size={12} className="text-red-600" /> Áreas Críticas
-            </h3>
-            <div className="flex flex-wrap gap-2">
-              {report.affectedAreas.map((area, i) => (
-                <Badge key={i} variant="outline" className="text-[10px] bg-slate-900 border-slate-700 text-slate-400 px-2 py-0.5">
-                  {area}
-                </Badge>
-              ))}
+        <div className="space-y-5" role="alert">
+          <div className="flex items-center justify-between bg-slate-900 p-3 rounded-lg border border-slate-800 shadow-inner">
+            <Badge className={`${getAlertBadgeColor(report.alertLevel)} text-white font-black text-[10px] uppercase px-2 py-1`}>
+              {report.alertLevel}
+            </Badge>
+            <div className="flex flex-col items-end">
+               <span className="text-[9px] font-mono text-slate-500 uppercase">Sincronismo em: {formatTime(countdown)}</span>
+               <span className="text-[8px] font-black text-emerald-500/70 uppercase">Fatos das {report.lastUpdated}</span>
             </div>
           </div>
 
+          <Card className="bg-slate-800/30 border-slate-700/50">
+            <CardContent className="p-4 space-y-2">
+              <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                <Radio size={12} className="text-red-600" /> Boletim Factual
+              </h3>
+              <p className="text-sm text-slate-200 leading-relaxed font-semibold antialiased">
+                {report.summary}
+              </p>
+            </CardContent>
+          </Card>
+
           <div className="space-y-3">
             <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
-              <ShieldCheck size={12} className="text-green-600" /> Recomendações
+              <MapPin size={12} className="text-red-600" /> Áreas Críticas Confirmadas
             </h3>
-            <ul className="space-y-2">
+            <div className="flex flex-wrap gap-2">
+              {report.affectedAreas.length > 0 ? report.affectedAreas.map((area, i) => (
+                <Badge key={i} variant="outline" className="text-[9px] bg-slate-900 border-slate-800 text-slate-400 px-2 py-1 font-bold">
+                  {area}
+                </Badge>
+              )) : <span className="text-[10px] text-slate-600 italic">Nenhuma área crítica reportada</span>}
+            </div>
+          </div>
+
+          <div className="space-y-3 pt-2 border-t border-slate-800">
+            <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
+              <ShieldCheck size={12} className="text-green-600" /> Orientações de Segurança
+            </h3>
+            <ul className="space-y-2.5">
               {report.recommendations.map((rec, i) => (
-                <li key={i} className="text-xs text-slate-300 flex gap-2">
-                  <span className="text-red-600 font-bold">•</span> {rec}
+                <li key={i} className="text-[11px] text-slate-300 flex gap-2 leading-tight">
+                  <span className="text-red-600 font-black">•</span> {rec}
                 </li>
               ))}
             </ul>
           </div>
         </div>
       ) : (
-        <div className="p-10 text-center text-slate-500 text-xs italic">
-          Nenhum boletim gerado ainda. Clique em atualizar.
+        <div className="p-10 text-center text-slate-500 text-[10px] font-black uppercase tracking-widest flex flex-col items-center gap-4">
+          <RefreshCw className="w-8 h-8 opacity-20" />
+          Nenhum boletim factual gerado.
         </div>
       )}
     </div>
