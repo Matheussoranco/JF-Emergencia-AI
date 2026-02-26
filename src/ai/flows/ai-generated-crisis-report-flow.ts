@@ -24,7 +24,7 @@ const AiGeneratedCrisisReportOutputSchema = z.object({
     lng: z.number().describe('Longitude real do incidente em Juiz de Fora (entre -43.3 e -43.42)'),
     description: z.string().describe('Descrição factual do incidente neste ponto'),
     type: z.enum(['alagamento', 'deslizamento', 'bloqueio', 'atencao']),
-    severity: z.number().min(1).max(3).describe('1=baixo, 2=médio, 3=alto')
+    severity: z.number().int().min(1).max(3).describe('Número inteiro: 1=baixo, 2=médio, 3=alto')
   })).describe('Pontos geográficos precisos de incidentes CONFIRMADOS. Array vazio se sem incidentes.')
 });
 
@@ -136,7 +136,7 @@ function getWmoDescription(code: number): string {
 async function fetchCrisisNews(currentDateTime: string): Promise<string> {
   try {
     const searchResponse = await ai.generate({
-      model: 'googleai/gemini-2.0-flash',
+      model: 'googleai/gemini-2.5-flash',
       prompt: `Pesquise e resuma as informacoes MAIS RECENTES e VERIFICAVEIS sobre a situacao em Juiz de Fora, MG, Brasil, especificamente:
 
 1. Chuvas e enchentes: Chuvas intensas, alagamentos, transbordamento de rios (Paraibuna, corregos)
@@ -156,12 +156,8 @@ IMPORTANTE:
 
 Data/hora da consulta: ${currentDateTime}`,
       config: {
-        googleSearchRetrieval: {
-          dynamicRetrievalConfig: {
-            mode: 'MODE_DYNAMIC',
-            dynamicThreshold: 0.3,
-          },
-        },
+        // For Gemini 2.0+, googleSearchRetrieval: true enables Google Search grounding
+        googleSearchRetrieval: true,
       },
     });
 
@@ -172,11 +168,12 @@ Data/hora da consulta: ${currentDateTime}`,
     // Fallback: tenta gerar sem grounding se o Search falhou
     try {
       const fallbackResponse = await ai.generate({
-        model: 'googleai/gemini-2.0-flash',
-        prompt: `Com base no seu conhecimento, resuma a situação mais provavel de chuvas e enchentes em Juiz de Fora, MG em fevereiro de 2026. Se não tem informações específicas, diga "Sem dados de noticias disponiveis. Baseie-se nos dados meteorologicos."\n\nData/hora: ${currentDateTime}`,
+        model: 'googleai/gemini-2.5-flash',
+        prompt: `Com base no seu conhecimento até à data atual, resuma brevemente o histórico de chuvas e enchentes em Juiz de Fora, MG, Brasil. Se não tem informações específicas para fevereiro de 2026, diga "Sem dados de noticias disponiveis. Analise baseada apenas nos dados meteorologicos.".\n\nData/hora: ${currentDateTime}`,
       });
-      return `=== NOTICIAS E ALERTAS (fallback sem grounding) ===\n${fallbackResponse.text ?? 'Sem resultados.'}`;
-    } catch {
+      return `=== NOTICIAS E ALERTAS (sem grounding web) ===\n${fallbackResponse.text ?? 'Sem resultados.'}`;
+    } catch (e2: any) {
+      console.error('[fetchCrisisNews] Fallback também falhou:', e2?.message);
       return `=== NOTICIAS E ALERTAS ===
 Busca web indisponivel: ${e?.message ?? 'erro desconhecido'}.
 Analise sera baseada apenas nos dados meteorologicos medidos.`;
@@ -194,7 +191,7 @@ export async function generateCrisisReport(input: { currentDateTime: string }): 
     ]);
 
     const { output } = await ai.generate({
-      model: 'googleai/gemini-2.0-flash',
+      model: 'googleai/gemini-2.5-flash',
       output: { schema: AiGeneratedCrisisReportOutputSchema },
       prompt: `Voce e o Sistema de Monitoramento Inteligente da Defesa Civil de Juiz de Fora, MG.
 Analise os DADOS REAIS abaixo e gere um boletim ESTRITAMENTE FACTUAL.
@@ -255,8 +252,14 @@ Data/hora: ${input.currentDateTime}`,
     return output;
 
   } catch (error: any) {
-    console.error('[generateCrisisReport] Erro fatal:', error);
+    const status = error?.status ?? error?.code ?? 'unknown';
+    const detail = error?.message ?? String(error);
+    console.error(`[generateCrisisReport] Erro fatal — status=${status}: ${detail}`);
     // Em caso de erro na geração (ex: API key invalida, erro de rede, quota), retorna fallback
-    return FALLBACK_REPORT;
+    const fallbackWithDetails: AiGeneratedCrisisReportOutput = {
+      ...FALLBACK_REPORT,
+      summary: `${FALLBACK_REPORT.summary} Código do erro: ${status}.`,
+    };
+    return fallbackWithDetails;
   }
 }
