@@ -3,7 +3,8 @@ export const STORAGE_KEYS = {
   REPORTS: 'jf_alerta_reports',
   DONATION_CENTERS: 'jf_alerta_donations',
   API_KEY: 'jf_alerta_api_key',
-  LAST_AI_REPORT: 'jf_alerta_last_status'
+  LAST_AI_REPORT: 'jf_alerta_last_status',
+  REPORT_HISTORY: 'jf_alerta_report_history',
 };
 
 export const getStorageItem = <T>(key: string, defaultValue: T): T => {

@@ -356,7 +356,15 @@ Data/hora da consulta: ${currentDateTime}`,
 
 // ── Geração do relatório estruturado ────────────────────────────────────────
 export async function generateCrisisReport(
-  input: { currentDateTime: string }
+  input: {
+    currentDateTime: string;
+    previousReport?: {
+      when: string;
+      alertLevel: string;
+      affectedAreas: string[];
+      summary: string;
+    } | null;
+  }
 ): Promise<AiGeneratedCrisisReportOutput> {
   try {
     const [openMeteo, inmetAlerts, inmetForecast, cemaden, climatempo, anaRiver, liveNews] =
@@ -418,6 +426,15 @@ REGRAS INVIOLÁVEIS:
 7. Se notícias trouxerem incidentes em bairros específicos, crie markers com coordenadas do bairro.
 
 8. Nunca use "simulação" ou "dados simulados". Estes são DADOS REAIS e NOTÍCIAS VERIFICADAS.
+
+${input.previousReport ? `9. CONTEXTO DO BOLETIM ANTERIOR (gerado às ${input.previousReport.when}):
+   Nível anterior: ${input.previousReport.alertLevel}
+   Áreas afetadas anteriores: ${input.previousReport.affectedAreas.join(', ') || 'nenhuma'}
+   Resumo anterior: "${input.previousReport.summary}"
+
+   REGRA ANTI-REPETIÇÃO: NÃO repita verbatim o texto acima.
+   - Se a situação MUDOU (novo nível, novas áreas, resolução de incidentes): inicie o summary com "ATUALIZAÇÃO: " e descreva O QUE MUDOU.
+   - Se a situação está ESTÁVEL e os dados numéricos são praticamente os mesmos: inicie com "Situação estável desde ${input.previousReport.when}. " e atualize com os números mais recentes.` : ''}
 
 Data/hora da consulta: ${input.currentDateTime}`,
     });

@@ -5,14 +5,39 @@ import { generateCrisisReport, AiGeneratedCrisisReportOutput } from '@/ai/flows/
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, MapPin, Cpu, Radio, ShieldCheck, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { RefreshCw, MapPin, Cpu, Radio, ShieldCheck, AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Skeleton } from '@/components/ui/skeleton';
 import { STORAGE_KEYS, getStorageItem, setStorageItem } from '@/lib/storage';
 
 const REFRESH_INTERVAL = 300; // 5 minutos
+const MAX_HISTORY = 10;
 
 type EnrichedReport = AiGeneratedCrisisReportOutput & { lastUpdated?: string; storageTimestamp?: string };
+
+interface ReportDiff {
+  levelChanged: boolean;
+  levelUp: boolean;   // escalation
+  levelDown: boolean; // improvement
+  newAreas: string[];
+  resolvedAreas: string[];
+}
+
+function computeDiff(current: EnrichedReport, previous: EnrichedReport): ReportDiff | null {
+  const levels = ['VERDE', 'AMARELO', 'LARANJA', 'VERMELHO'];
+  const curIdx  = levels.indexOf(current.alertLevel);
+  const prevIdx = levels.indexOf(previous.alertLevel);
+  const levelChanged = curIdx !== prevIdx;
+
+  const curAreas  = new Set(current.affectedAreas.map(a => a.toLowerCase()));
+  const prevAreas = new Set(previous.affectedAreas.map(a => a.toLowerCase()));
+
+  const newAreas      = current.affectedAreas.filter(a => !prevAreas.has(a.toLowerCase()));
+  const resolvedAreas = previous.affectedAreas.filter(a => !curAreas.has(a.toLowerCase()));
+
+  if (!levelChanged && newAreas.length === 0 && resolvedAreas.length === 0) return null;
+  return { levelChanged, levelUp: curIdx > prevIdx, levelDown: curIdx < prevIdx, newAreas, resolvedAreas };
+}
 
 interface AiStatusPanelProps {
   onMarkersUpdate?: (markers: AiGeneratedCrisisReportOutput['markers']) => void;
@@ -20,21 +45,20 @@ interface AiStatusPanelProps {
 }
 
 export default function AiStatusPanel({ onMarkersUpdate, onAlertChange }: AiStatusPanelProps) {
-  const [report, setReport] = useState<EnrichedReport | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [countdown, setCountdown] = useState(REFRESH_INTERVAL);
+  const [report, setReport]           = useState<EnrichedReport | null>(null);
+  const [history, setHistory]         = useState<EnrichedReport[]>([]);
+  const [diff, setDiff]               = useState<ReportDiff | null>(null);
+  const [loading, setLoading]         = useState(false);
+  const [error, setError]             = useState<string | null>(null);
+  const [countdown, setCountdown]     = useState(REFRESH_INTERVAL);
+  const [showHistory, setShowHistory] = useState(false);
   const { toast } = useToast();
 
-  // Keep latest callbacks in refs so effects never go stale
   const onMarkersUpdateRef = useRef(onMarkersUpdate);
-  const onAlertChangeRef = useRef(onAlertChange);
+  const onAlertChangeRef   = useRef(onAlertChange);
   useEffect(() => { onMarkersUpdateRef.current = onMarkersUpdate; }, [onMarkersUpdate]);
-  useEffect(() => { onAlertChangeRef.current = onAlertChange; }, [onAlertChange]);
+  useEffect(() => { onAlertChangeRef.current   = onAlertChange;   }, [onAlertChange]);
 
-  // Propagate report data to parent AFTER our own render settles.
-  // This is the safe pattern — never call parent setters inside startTransition
-  // or directly in the async callback, which triggers the Router/render warning.
   useEffect(() => {
     if (!report) return;
     onMarkersUpdateRef.current?.(report.markers ?? []);
@@ -45,18 +69,39 @@ export default function AiStatusPanel({ onMarkersUpdate, onAlertChange }: AiStat
     setLoading(true);
     setError(null);
     try {
+      // Read current history from localStorage to get latest previous report
+      const storedHistory = getStorageItem<EnrichedReport[]>(STORAGE_KEYS.REPORT_HISTORY, []);
+      const prev = storedHistory[0] ?? null;
+
       const data = await generateCrisisReport({
         currentDateTime: new Date().toLocaleString('pt-BR'),
+        previousReport: prev
+          ? { when: prev.lastUpdated ?? '', alertLevel: prev.alertLevel, affectedAreas: prev.affectedAreas, summary: prev.summary }
+          : null,
       });
 
       const timestamp = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
       const enriched: EnrichedReport = { ...data, lastUpdated: timestamp, storageTimestamp: new Date().toISOString() };
 
-      setReport(enriched);
+      // Compute what changed since the last report
+      const newDiff = prev ? computeDiff(enriched, prev) : null;
+      setDiff(newDiff);
+
+      // Update rolling history (newest first, cap at MAX_HISTORY)
+      const updatedHistory = [enriched, ...storedHistory].slice(0, MAX_HISTORY);
+      setHistory(updatedHistory);
+      setStorageItem(STORAGE_KEYS.REPORT_HISTORY, updatedHistory);
       setStorageItem(STORAGE_KEYS.LAST_AI_REPORT, enriched);
+
+      setReport(enriched);
       setCountdown(REFRESH_INTERVAL);
 
-      toast({ title: 'Boletim Atualizado', description: `Dados sincronizados às ${timestamp}.` });
+      const diffMsg = newDiff
+        ? (newDiff.levelChanged ? ` Nível: ${prev?.alertLevel} → ${enriched.alertLevel}.` : '') +
+          (newDiff.newAreas.length ? ` +${newDiff.newAreas.length} área(s).` : '') +
+          (newDiff.resolvedAreas.length ? ` -${newDiff.resolvedAreas.length} resolvida(s).` : '')
+        : ' Sem alterações.';
+      toast({ title: 'Boletim Atualizado', description: `Fatos das ${timestamp}.${diffMsg}` });
     } catch (err: any) {
       const msg = err?.message ?? '';
       let userMsg = 'Falha ao atualizar dados. Tente novamente.';
@@ -80,9 +125,13 @@ export default function AiStatusPanel({ onMarkersUpdate, onAlertChange }: AiStat
     }
   }, [toast]);
 
-  // Load cached report on mount, fetch if stale or absent
+  // Load cached report + history on mount
   useEffect(() => {
-    const cached = getStorageItem<EnrichedReport>(STORAGE_KEYS.LAST_AI_REPORT, null as unknown as EnrichedReport);
+    const storedHistory = getStorageItem<EnrichedReport[]>(STORAGE_KEYS.REPORT_HISTORY, []);
+    const cached = storedHistory[0] ?? getStorageItem<EnrichedReport>(STORAGE_KEYS.LAST_AI_REPORT, null as unknown as EnrichedReport);
+
+    if (storedHistory.length > 0) setHistory(storedHistory);
+
     if (cached?.storageTimestamp) {
       const ageSec = Math.floor((Date.now() - new Date(cached.storageTimestamp).getTime()) / 1000);
       const remaining = Math.max(0, REFRESH_INTERVAL - ageSec);
@@ -116,13 +165,13 @@ export default function AiStatusPanel({ onMarkersUpdate, onAlertChange }: AiStat
 
   const formatTime = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
 
-  const getAlertBadgeColor = (level: string) => {
-    switch (level) {
-      case 'VERDE': return 'bg-emerald-500 hover:bg-emerald-600';
-      case 'AMARELO': return 'bg-amber-500 hover:bg-amber-600';
-      case 'LARANJA': return 'bg-orange-500 hover:bg-orange-600';
-      case 'VERMELHO': return 'bg-red-600 pulse-red';
-      default: return 'bg-slate-600';
+  const levelColor = (l: string) => {
+    switch (l) {
+      case 'VERDE':    return 'text-emerald-400 border-emerald-700 bg-emerald-950/40';
+      case 'AMARELO':  return 'text-amber-400 border-amber-700 bg-amber-950/40';
+      case 'LARANJA':  return 'text-orange-400 border-orange-700 bg-orange-950/40';
+      case 'VERMELHO': return 'text-red-400 border-red-700 bg-red-950/40';
+      default:         return 'text-slate-400 border-slate-700 bg-slate-900';
     }
   };
 
@@ -156,16 +205,42 @@ export default function AiStatusPanel({ onMarkersUpdate, onAlertChange }: AiStat
         </div>
       ) : report ? (
         <div className="space-y-5">
+          {/* Alert level + timer */}
           <div className="flex items-center justify-between bg-slate-900 p-3 rounded-lg border border-slate-800 shadow-inner">
-            <Badge className={`${getAlertBadgeColor(report.alertLevel)} text-white font-black text-[10px] uppercase px-2 py-1`}>
-              {report.alertLevel}
+            <Badge className={`font-black text-[10px] uppercase px-2 py-1 border ${levelColor(report.alertLevel)}`}>
+              ALERTA {report.alertLevel}
             </Badge>
-            <div className="flex flex-col items-end">
+            <div className="flex flex-col items-end gap-0.5">
                <span className="text-[9px] font-mono text-slate-500 uppercase">Sinc: {formatTime(countdown)}</span>
                <span className="text-[8px] font-black text-emerald-500/70 uppercase">Fatos das {report.lastUpdated}</span>
             </div>
           </div>
 
+          {/* Diff banner — only when something actually changed */}
+          {diff && (
+            <div className={`rounded-lg border px-3 py-2 text-[10px] font-black uppercase flex flex-col gap-1 ${
+              diff.levelUp ? 'border-red-700 bg-red-950/30 text-red-400' :
+              diff.levelDown ? 'border-emerald-700 bg-emerald-950/30 text-emerald-400' :
+              'border-slate-700 bg-slate-900 text-slate-400'
+            }`}>
+              <span className="flex items-center gap-1">
+                {diff.levelUp    && <TrendingUp  size={12} />}
+                {diff.levelDown  && <TrendingDown size={12} />}
+                {!diff.levelChanged && <Minus size={12} />}
+                {diff.levelChanged
+                  ? `Nível de alerta ${diff.levelUp ? 'elevado' : 'reduzido'}: ${history[1]?.alertLevel} → ${report.alertLevel}`
+                  : 'Nível de alerta inalterado'}
+              </span>
+              {diff.newAreas.length > 0 && (
+                <span className="text-orange-400">⬆ Nova(s): {diff.newAreas.join(', ')}</span>
+              )}
+              {diff.resolvedAreas.length > 0 && (
+                <span className="text-emerald-400">⬇ Resolvida(s): {diff.resolvedAreas.join(', ')}</span>
+              )}
+            </div>
+          )}
+
+          {/* Summary */}
           <Card className="bg-slate-800/30 border-slate-700/50">
             <CardContent className="p-4 space-y-2">
               <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
@@ -177,6 +252,7 @@ export default function AiStatusPanel({ onMarkersUpdate, onAlertChange }: AiStat
             </CardContent>
           </Card>
 
+          {/* Affected areas */}
           <div className="space-y-3">
             <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
               <MapPin size={12} className="text-red-600" /> Áreas Afetadas
@@ -196,6 +272,7 @@ export default function AiStatusPanel({ onMarkersUpdate, onAlertChange }: AiStat
             )}
           </div>
 
+          {/* Recommendations */}
           <div className="space-y-3 pt-2 border-t border-slate-800">
             <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
               <ShieldCheck size={12} className="text-emerald-500" /> Recomendações
@@ -208,6 +285,39 @@ export default function AiStatusPanel({ onMarkersUpdate, onAlertChange }: AiStat
               ))}
             </ul>
           </div>
+
+          {/* History timeline */}
+          {history.length > 1 && (
+            <div className="pt-2 border-t border-slate-800">
+              <button
+                className="w-full flex items-center justify-between text-[10px] font-black text-slate-500 uppercase hover:text-slate-300 transition-colors py-1"
+                onClick={() => setShowHistory(h => !h)}
+              >
+                <span>Histórico ({history.length - 1} boletins anteriores)</span>
+                {showHistory ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              </button>
+              {showHistory && (
+                <div className="mt-2 space-y-2 max-h-64 overflow-y-auto no-scrollbar">
+                  {history.slice(1).map((h, i) => (
+                    <div key={i} className="bg-slate-900/60 rounded-lg border border-slate-800 p-2.5">
+                      <div className="flex items-center justify-between mb-1">
+                        <Badge className={`text-[8px] font-black uppercase px-1.5 py-0 border ${levelColor(h.alertLevel)}`}>
+                          {h.alertLevel}
+                        </Badge>
+                        <span className="text-[8px] font-mono text-slate-600">{h.lastUpdated}</span>
+                      </div>
+                      <p className="text-[10px] text-slate-400 leading-snug line-clamp-3">{h.summary}</p>
+                      {h.affectedAreas.length > 0 && (
+                        <p className="text-[9px] text-slate-600 mt-1">
+                          Áreas: {h.affectedAreas.join(', ')}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       ) : (
         <div className="p-10 text-center text-slate-500 text-[10px] font-black uppercase flex flex-col items-center gap-4">
