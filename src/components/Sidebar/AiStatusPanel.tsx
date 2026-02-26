@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef, useTransition } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { generateCrisisReport, AiGeneratedCrisisReportOutput } from '@/ai/flows/ai-generated-crisis-report-flow';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -12,108 +12,107 @@ import { STORAGE_KEYS, getStorageItem, setStorageItem } from '@/lib/storage';
 
 const REFRESH_INTERVAL = 300; // 5 minutos
 
+type EnrichedReport = AiGeneratedCrisisReportOutput & { lastUpdated?: string; storageTimestamp?: string };
+
 interface AiStatusPanelProps {
   onMarkersUpdate?: (markers: AiGeneratedCrisisReportOutput['markers']) => void;
   onAlertChange?: (level: any) => void;
 }
 
 export default function AiStatusPanel({ onMarkersUpdate, onAlertChange }: AiStatusPanelProps) {
-  const [report, setReport] = useState<(AiGeneratedCrisisReportOutput & { lastUpdated?: string }) | null>(null);
+  const [report, setReport] = useState<EnrichedReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [countdown, setCountdown] = useState(REFRESH_INTERVAL);
-  const [isPending, startTransition] = useTransition();
   const { toast } = useToast();
 
-  // Use refs for callbacks to avoid stale closure issues in useEffect
+  // Keep latest callbacks in refs so effects never go stale
   const onMarkersUpdateRef = useRef(onMarkersUpdate);
   const onAlertChangeRef = useRef(onAlertChange);
   useEffect(() => { onMarkersUpdateRef.current = onMarkersUpdate; }, [onMarkersUpdate]);
   useEffect(() => { onAlertChangeRef.current = onAlertChange; }, [onAlertChange]);
 
+  // Propagate report data to parent AFTER our own render settles.
+  // This is the safe pattern — never call parent setters inside startTransition
+  // or directly in the async callback, which triggers the Router/render warning.
+  useEffect(() => {
+    if (!report) return;
+    onMarkersUpdateRef.current?.(report.markers ?? []);
+    onAlertChangeRef.current?.(report.alertLevel);
+  }, [report]);
+
   const fetchReport = useCallback(async () => {
-    if (loading || isPending) return;
     setLoading(true);
     setError(null);
     try {
-      const data = await generateCrisisReport({ 
-        currentDateTime: new Date().toLocaleString('pt-BR') 
+      const data = await generateCrisisReport({
+        currentDateTime: new Date().toLocaleString('pt-BR'),
       });
-      
+
       const timestamp = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-      const enrichedReport = { ...data, lastUpdated: timestamp };
+      const enriched: EnrichedReport = { ...data, lastUpdated: timestamp, storageTimestamp: new Date().toISOString() };
 
-      startTransition(() => {
-        setReport(enrichedReport);
-        onMarkersUpdateRef.current?.(data.markers);
-        onAlertChangeRef.current?.(data.alertLevel);
-        setStorageItem(STORAGE_KEYS.LAST_AI_REPORT, { ...enrichedReport, storageTimestamp: new Date().toISOString() });
-        setCountdown(REFRESH_INTERVAL);
-      });
+      setReport(enriched);
+      setStorageItem(STORAGE_KEYS.LAST_AI_REPORT, enriched);
+      setCountdown(REFRESH_INTERVAL);
 
-      toast({
-        title: "Boletim Atualizado",
-        description: `Dados sincronizados às ${timestamp}.`,
-      });
-    } catch (error: any) {
-      console.error('Fetch Error:', error);
-      const msg = error?.message ?? '';
-      let userMsg = "Falha ao atualizar dados. Tente novamente.";
-      let toastDesc = "Servidor sobrecarregado ou chave de API inválida.";
-      
+      toast({ title: 'Boletim Atualizado', description: `Dados sincronizados às ${timestamp}.` });
+    } catch (err: any) {
+      const msg = err?.message ?? '';
+      let userMsg = 'Falha ao atualizar dados. Tente novamente.';
+      let toastDesc = 'Servidor sobrecarregado ou chave de API inválida.';
+
       if (msg.includes('API_KEY') || msg.includes('401') || msg.includes('403') || msg.includes('GOOGLE_GENAI_API_KEY')) {
-        userMsg = "Chave da API Gemini não configurada ou inválida.";
-        toastDesc = "Configure GOOGLE_GENAI_API_KEY no arquivo .env.local e reinicie o servidor.";
+        userMsg = 'Chave da API Gemini não configurada ou inválida.';
+        toastDesc = 'Configure GOOGLE_GENAI_API_KEY no arquivo .env.local e reinicie o servidor.';
       } else if (msg.includes('fetch') || msg.includes('network') || msg.includes('ECONNREFUSED')) {
-        userMsg = "Erro de conexão com o servidor de IA.";
-        toastDesc = "Verifique sua conexão de internet e tente novamente.";
+        userMsg = 'Erro de conexão com o servidor de IA.';
+        toastDesc = 'Verifique sua conexão de internet e tente novamente.';
       } else if (msg.includes('429') || msg.includes('quota') || msg.includes('rate')) {
-        userMsg = "Limite de requisições da API excedido.";
-        toastDesc = "Aguarde alguns minutos e tente novamente.";
+        userMsg = 'Limite de requisições da API excedido.';
+        toastDesc = 'Aguarde alguns minutos e tente novamente.';
       }
-      
+
       setError(userMsg);
-      toast({ 
-        variant: "destructive", 
-        title: "Erro de Sincronismo", 
-        description: toastDesc
-      });
+      toast({ variant: 'destructive', title: 'Erro de Sincronismo', description: toastDesc });
     } finally {
       setLoading(false);
     }
-  }, [toast, loading, isPending]);
+  }, [toast]);
 
+  // Load cached report on mount, fetch if stale or absent
   useEffect(() => {
-    const cached = getStorageItem<any>(STORAGE_KEYS.LAST_AI_REPORT, null);
-    if (cached) {
+    const cached = getStorageItem<EnrichedReport>(STORAGE_KEYS.LAST_AI_REPORT, null as unknown as EnrichedReport);
+    if (cached?.storageTimestamp) {
+      const ageSec = Math.floor((Date.now() - new Date(cached.storageTimestamp).getTime()) / 1000);
+      const remaining = Math.max(0, REFRESH_INTERVAL - ageSec);
       setReport(cached);
-      onMarkersUpdateRef.current?.(cached.markers ?? []);
-      onAlertChangeRef.current?.(cached.alertLevel);
-      const diff = Math.floor((Date.now() - new Date(cached.storageTimestamp).getTime()) / 1000);
-      const remaining = Math.max(0, REFRESH_INTERVAL - diff);
       setCountdown(remaining);
-      // If cached data is older than the refresh interval, fetch fresh data
-      if (remaining <= 0) {
-        fetchReport();
-      }
+      if (remaining <= 0) fetchReport();
     } else {
       fetchReport();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Auto-refresh countdown
   useEffect(() => {
     const timer = setInterval(() => {
       setCountdown((prev) => {
-        if (prev <= 1) {
-          if (!loading && !isPending && !error) fetchReport();
-          return REFRESH_INTERVAL;
-        }
+        if (prev <= 1) return REFRESH_INTERVAL;
         return prev - 1;
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [fetchReport, loading, isPending, error]);
+  }, []);
+
+  // Trigger fetch when countdown hits zero (decoupled from the interval)
+  useEffect(() => {
+    if (countdown === REFRESH_INTERVAL && !loading && report) {
+      fetchReport();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [countdown]);
 
   const formatTime = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
 
@@ -137,14 +136,14 @@ export default function AiStatusPanel({ onMarkersUpdate, onAlertChange }: AiStat
           variant="ghost" 
           size="icon" 
           onClick={fetchReport} 
-          disabled={loading || isPending} 
+          disabled={loading} 
           className="h-8 w-8 text-slate-500"
         >
-          <RefreshCw className={`w-4 h-4 ${(loading || isPending) ? 'animate-spin text-red-500' : ''}`} />
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-red-500' : ''}`} />
         </Button>
       </div>
 
-      {(loading || isPending) && !report ? (
+      {loading && !report ? (
         <div className="space-y-4">
           <Skeleton className="h-20 w-full bg-slate-800/50" />
           <Skeleton className="h-40 w-full bg-slate-800/50" />
