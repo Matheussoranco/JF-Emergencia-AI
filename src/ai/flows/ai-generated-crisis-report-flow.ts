@@ -4,7 +4,7 @@
 /**
  * @fileOverview Fluxo de Monitoramento de Crise Factual para Juiz de Fora.
  * Fase 1: Coleta dados meteorológicos REAIS via Open-Meteo (gratuito).
- * Fase 2: Pesquisa notícias reais via Google Search Grounding (Gemini 2.0).
+ * Fase 2: Pesquisa notícias reais via Google Search Grounding (Gemini 1.5).
  * Fase 3: Gera relatório estruturado e factual combinando todas as fontes.
  */
 
@@ -124,7 +124,7 @@ function getWmoDescription(code: number): string {
 async function fetchCrisisNews(currentDateTime: string): Promise<string> {
   try {
     const searchResponse = await ai.generate({
-      model: 'googleai/gemini-3.0-flash',
+      model: 'googleai/gemini-1.5-flash-002',
       prompt: `Pesquise e resuma as informacoes MAIS RECENTES e VERIFICAVEIS sobre a situacao em Juiz de Fora, MG, Brasil, especificamente:
 
 1. Chuvas e enchentes: Chuvas intensas, alagamentos, transbordamento de rios (Paraibuna, corregos)
@@ -171,7 +171,7 @@ export async function generateCrisisReport(input: { currentDateTime: string }): 
   ]);
 
   const { output } = await ai.generate({
-    model: 'googleai/gemini-3.0-flash',
+    model: 'googleai/gemini-1.5-flash-002',
     output: { schema: AiGeneratedCrisisReportOutputSchema },
     prompt: `Voce e o Sistema de Monitoramento Inteligente da Defesa Civil de Juiz de Fora, MG.
 Analise os DADOS REAIS abaixo e gere um boletim ESTRITAMENTE FACTUAL.
