@@ -4,7 +4,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { MapContainer, TileLayer, Marker, Popup, CircleMarker, LayersControl } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, CircleMarker, LayersControl, LayerGroup } from 'react-leaflet';
 import { JF_CENTER, RISK_ZONES, SAFE_ZONES, DONATION_POINTS } from '@/data/seed-data';
 import { CommunityReport, AiMarker } from '@/types';
 import { Home, Heart, AlertTriangle, Cpu, Droplets, Mountain, Ban, Power, UserRound, CheckCircle2 } from 'lucide-react';
@@ -78,7 +78,7 @@ export default function EmergencyMap({ reports, aiMarkers }: MapProps) {
 
       <LayersControl position="topright">
         <LayersControl.Overlay name="⚠️ Zonas de Risco" checked>
-          <L.LayerGroup>
+          <LayerGroup>
             {memoRiskZones.map((zone) => (
               <CircleMarker
                 key={zone.id}
@@ -99,11 +99,11 @@ export default function EmergencyMap({ reports, aiMarkers }: MapProps) {
                 </Popup>
               </CircleMarker>
             ))}
-          </L.LayerGroup>
+          </LayerGroup>
         </LayersControl.Overlay>
 
         <LayersControl.Overlay name="🏠 Abrigos" checked>
-          <L.LayerGroup>
+          <LayerGroup>
             {memoSafeZones.map((zone) => (
               <Marker key={zone.id} position={[zone.lat, zone.lng]} icon={SafeIcon}>
                 <Popup>
@@ -115,11 +115,11 @@ export default function EmergencyMap({ reports, aiMarkers }: MapProps) {
                 </Popup>
               </Marker>
             ))}
-          </L.LayerGroup>
+          </LayerGroup>
         </LayersControl.Overlay>
 
         <LayersControl.Overlay name="🎁 Doações" checked>
-          <L.LayerGroup>
+          <LayerGroup>
             {memoDonations.map((point) => (
               <Marker key={point.id} position={[point.lat, point.lng]} icon={DonationIcon}>
                 <Popup>
@@ -131,11 +131,11 @@ export default function EmergencyMap({ reports, aiMarkers }: MapProps) {
                 </Popup>
               </Marker>
             ))}
-          </L.LayerGroup>
+          </LayerGroup>
         </LayersControl.Overlay>
 
         <LayersControl.Overlay name="👥 Alertas Comunidade" checked>
-          <L.LayerGroup>
+          <LayerGroup>
             {reports.map((report) => (
               <Marker key={report.id} position={[report.lat, report.lng]} icon={getReportIcon(report.type, report.severity)}>
                 <Popup>
@@ -148,11 +148,11 @@ export default function EmergencyMap({ reports, aiMarkers }: MapProps) {
                 </Popup>
               </Marker>
             ))}
-          </L.LayerGroup>
+          </LayerGroup>
         </LayersControl.Overlay>
 
         <LayersControl.Overlay name="🤖 Monitoramento IA" checked>
-          <L.LayerGroup>
+          <LayerGroup>
             {aiMarkers.map((marker, idx) => (
               <Marker key={`ai-${idx}`} position={[marker.lat, marker.lng]} icon={AiIcon}>
                 <Popup>
@@ -167,7 +167,7 @@ export default function EmergencyMap({ reports, aiMarkers }: MapProps) {
                 </Popup>
               </Marker>
             ))}
-          </L.LayerGroup>
+          </LayerGroup>
         </LayersControl.Overlay>
       </LayersControl>
     </MapContainer>
