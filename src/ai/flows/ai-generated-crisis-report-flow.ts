@@ -1,265 +1,412 @@
-
 'use server';
 
 /**
- * @fileOverview Fluxo de Monitoramento de Crise Factual para Juiz de Fora.
- * Fase 1: Coleta dados meteorológicos REAIS via Open-Meteo (gratuito).
- * Fase 2: Pesquisa notícias reais via Google Search Grounding (Gemini 1.5).
- * Fase 3: Gera relatório estruturado e factual combinando todas as fontes.
+ * @fileOverview Fluxo de Monitoramento de Crise — Juiz de Fora, MG
+ *
+ * Fontes de dados coletadas em PARALELO antes de gerar o relatório:
+ *   1. Open-Meteo      — Clima atual + acumulados (gratuito, sem key)
+ *   2. INMET Alertas   — Alertas oficiais para MG/JF (gratuito, sem key)
+ *   3. INMET Previsão  — Previsão 7 dias para JF IBGE 3136702 (gratuito)
+ *   4. CEMADEN         — Acumulado de chuva estações pluviométricas JF (gratuito)
+ *   5. Climatempo      — Previsão + atual (opcional — CLIMATEMPO_API_TOKEN env var)
+ *   6. Google Search   — Notícias e alertas em tempo real via Gemini Grounding
  */
 
 import { ai } from '@/ai/genkit';
 import { z } from 'genkit';
 
-// ── Schema do relatório ──────────────────────────────────────────────
+// ── Constantes geográficas ───────────────────────────────────────────────────
+const JF_LAT = '-21.76';
+const JF_LON = '-43.35';
+const JF_IBGE = '3136702';          // Código IBGE Juiz de Fora
+const CLIMATEMPO_LOCALE_ID = 3140;  // ID Climatempo para Juiz de Fora
+
+// ── Schema do relatório ──────────────────────────────────────────────────────
 const AiGeneratedCrisisReportOutputSchema = z.object({
-  summary: z.string().describe('Resumo estritamente factual (max 500 chars) da situação atual em Juiz de Fora, citando dados numéricos reais.'),
-  alertLevel: z.enum(['VERDE', 'AMARELO', 'LARANJA', 'VERMELHO']).describe(
-    'Nível de alerta baseado em dados técnicos: VERDE=sem risco; AMARELO=atenção; LARANJA=risco alto; VERMELHO=emergência.'
+  summary: z.string().describe(
+    'Resumo estritamente factual (max 600 chars) citando dados numéricos REAIS de temperatura, precipitação e alertas oficiais ativos.'
   ),
-  affectedAreas: z.array(z.string()).describe('Lista de bairros ou vias com problemas confirmados. Vazio se não há incidentes.'),
-  recommendations: z.array(z.string()).describe('Orientações práticas de segurança baseadas na situação real.'),
+  alertLevel: z.enum(['VERDE', 'AMARELO', 'LARANJA', 'VERMELHO']).describe(
+    'Nível de alerta: VERDE=sem risco; AMARELO=atenção; LARANJA=risco alto; VERMELHO=emergência ativa.'
+  ),
+  affectedAreas: z.array(z.string()).describe(
+    'Lista de bairros/vias com problemas CONFIRMADOS por fontes oficiais. Array vazio se sem incidentes.'
+  ),
+  recommendations: z.array(z.string()).describe(
+    'Orientações práticas de segurança proporcionais ao nível de alerta real.'
+  ),
   markers: z.array(z.object({
-    lat: z.number().describe('Latitude real do incidente em Juiz de Fora (entre -21.7 e -21.82)'),
-    lng: z.number().describe('Longitude real do incidente em Juiz de Fora (entre -43.3 e -43.42)'),
-    description: z.string().describe('Descrição factual do incidente neste ponto'),
+    lat: z.number().describe('Latitude real do incidente (entre -21.65 e -21.85)'),
+    lng: z.number().describe('Longitude real do incidente (entre -43.25 e -43.50)'),
+    description: z.string().describe('Descrição factual e concisa do incidente'),
     type: z.enum(['alagamento', 'deslizamento', 'bloqueio', 'atencao']),
-    severity: z.number().int().min(1).max(3).describe('Número inteiro: 1=baixo, 2=médio, 3=alto')
-  })).describe('Pontos geográficos precisos de incidentes CONFIRMADOS. Array vazio se sem incidentes.')
+    severity: z.number().int().min(1).max(3).describe('1=baixo 2=médio 3=alto'),
+  })).describe('Pontos geográficos de incidentes CONFIRMADOS. Array vazio se não há incidentes.'),
 });
 
 export type AiGeneratedCrisisReportOutput = z.infer<typeof AiGeneratedCrisisReportOutputSchema>;
 
 const FALLBACK_REPORT: AiGeneratedCrisisReportOutput = {
-  summary: "O sistema de IA está temporariamente indisponível para análise detalhada. Baseie-se nos dados meteorológicos brutos e canais oficiais. Possível causa: chave de API inválida ou sobrecarga do serviço.",
-  alertLevel: "AMARELO",
+  summary:
+    'O sistema de IA está temporariamente indisponível. Consulte os canais oficiais: Defesa Civil (199), Bombeiros (193) e o site da Prefeitura de Juiz de Fora.',
+  alertLevel: 'AMARELO',
   affectedAreas: [],
   recommendations: [
-    "Acompanhe os alertas da Defesa Civil por SMS (40199).",
-    "Evite transitar por áreas de risco em caso de chuva forte.",
-    "Em emergência, ligue 199 ou 193."
+    'Acompanhe os alertas da Defesa Civil por SMS (40199).',
+    'Evite transitar por áreas de risco em caso de chuva forte.',
+    'Em emergência, ligue 199 (Defesa Civil) ou 193 (Bombeiros).',
   ],
-  markers: []
+  markers: [],
 };
 
-// ── Fase 1: Dados meteorológicos reais (Open-Meteo – gratuito, sem API key) ─
-async function fetchWeatherData(): Promise<string> {
+// ── 1. Open-Meteo ────────────────────────────────────────────────────────────
+async function fetchOpenMeteo(): Promise<string> {
   try {
     const params = new URLSearchParams({
-      latitude: '-21.76',
-      longitude: '-43.35',
-      current: 'temperature_2m,relative_humidity_2m,precipitation,rain,showers,weather_code,wind_speed_10m,surface_pressure',
+      latitude: JF_LAT,
+      longitude: JF_LON,
+      current:
+        'temperature_2m,relative_humidity_2m,precipitation,rain,showers,weather_code,wind_speed_10m,surface_pressure',
       hourly: 'precipitation_probability,precipitation',
-      daily: 'precipitation_sum,rain_sum,weather_code',
-      forecast_days: '2',
+      daily: 'precipitation_sum,rain_sum,weather_code,temperature_2m_max,temperature_2m_min',
+      forecast_days: '3',
       past_days: '3',
       timezone: 'America/Sao_Paulo',
     });
 
-    const response = await fetch(
-      `https://api.open-meteo.com/v1/forecast?${params}`,
-      { cache: 'no-store', signal: AbortSignal.timeout(8000) }
-    );
+    const res = await fetch(`https://api.open-meteo.com/v1/forecast?${params}`, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(9000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const d = await res.json();
 
-    if (!response.ok) throw new Error(`Open-Meteo HTTP ${response.status}`);
-    const data = await response.json();
+    const hp: number[] = d.hourly?.precipitation ?? [];
+    const acc24 = hp.slice(-24).reduce((s: number, v: number) => s + (v || 0), 0);
+    const acc72 = hp.slice(-72).reduce((s: number, v: number) => s + (v || 0), 0);
 
-    // Acumulado de chuva nas últimas 72h
-    const hourlyPrecip: number[] = data.hourly?.precipitation ?? [];
-    const hoursAvailable = Math.min(hourlyPrecip.length, 72);
-    const last72h = hourlyPrecip.slice(Math.max(0, hourlyPrecip.length - 72));
-    const accumulated72h = last72h.reduce((sum: number, v: number) => sum + (v || 0), 0);
+    const dailyRows = (d.daily?.time ?? [])
+      .map((dt: string, i: number) =>
+        `  ${dt}: ${(d.daily?.precipitation_sum?.[i] ?? 0).toFixed(1)}mm | ${d.daily?.temperature_2m_min?.[i] ?? '?'}–${d.daily?.temperature_2m_max?.[i] ?? '?'}°C`
+      )
+      .join('\n');
 
-    // Acumulado 24h
-    const last24h = hourlyPrecip.slice(Math.max(0, hourlyPrecip.length - 24));
-    const accumulated24h = last24h.reduce((sum: number, v: number) => sum + (v || 0), 0);
+    const next12precip = (d.hourly?.precipitation ?? []).slice(0, 12).map((v: number) => (v ?? 0).toFixed(1)).join(', ');
+    const next12prob   = (d.hourly?.precipitation_probability ?? []).slice(0, 12).join(', ');
+    const wmoText = WMO_DESCRIPTIONS[d.current?.weather_code as number] ?? `WMO ${d.current?.weather_code}`;
 
-    // Chuvas diárias (passado + previsão)
-    const dailyDates: string[] = data.daily?.time ?? [];
-    const dailyPrecip: number[] = data.daily?.precipitation_sum ?? [];
-    const dailyRain = dailyDates.map((d: string, i: number) =>
-      `${d}: ${dailyPrecip[i]?.toFixed(1) ?? '?'}mm`
-    ).join(' | ');
+    return `=== OPEN-METEO (Juiz de Fora, MG) ===
+Temperatura: ${d.current?.temperature_2m ?? '?'}°C | Umidade: ${d.current?.relative_humidity_2m ?? '?'}%
+Precipitação atual: ${d.current?.precipitation ?? 0}mm (chuva ${d.current?.rain ?? 0}mm + pancadas ${d.current?.showers ?? 0}mm)
+Condição: ${wmoText}
+Vento: ${d.current?.wind_speed_10m ?? '?'} km/h | Pressão: ${d.current?.surface_pressure ?? '?'} hPa
+Acumulado 24h: ${acc24.toFixed(1)}mm | 72h: ${acc72.toFixed(1)}mm
 
-    // Próximas 12 horas
-    const next12h: number[] = data.hourly?.precipitation?.slice(0, 12) ?? [];
-    const next12hProb: number[] = data.hourly?.precipitation_probability?.slice(0, 12) ?? [];
+Histórico diário:
+${dailyRows}
 
-    // Código WMO para texto
-    const wmoCode: number = data.current?.weather_code ?? -1;
-    const wmoText = getWmoDescription(wmoCode);
-
-    return `=== DADOS METEOROLOGICOS REAIS — Open-Meteo API ===
-Local: Juiz de Fora, MG (-21.76, -43.35)
-Temperatura: ${data.current?.temperature_2m ?? '?'}°C
-Umidade relativa: ${data.current?.relative_humidity_2m ?? '?'}%
-Precipitacao AGORA: ${data.current?.precipitation ?? 0}mm
-  Chuva: ${data.current?.rain ?? 0}mm | Pancadas: ${data.current?.showers ?? 0}mm
-Condicao (WMO ${wmoCode}): ${wmoText}
-Vento: ${data.current?.wind_speed_10m ?? '?'} km/h
-Pressao: ${data.current?.surface_pressure ?? '?'} hPa
-
-ACUMULADOS:
-  Ultimas 24h: ${accumulated24h.toFixed(1)}mm
-  Ultimas 72h: ${accumulated72h.toFixed(1)}mm (${hoursAvailable}h de dados)
-
-CHUVA DIARIA (passado -> previsao):
-  ${dailyRain}
-
-PREVISAO PROXIMAS 12H (mm):
-  ${next12h.map((v: number) => v?.toFixed(1) ?? '0').join(', ')}
-  Probabilidade (%): ${next12hProb.join(', ')}`;
+Próximas 12h — Precipitação (mm): ${next12precip}
+Próximas 12h — Probabilidade (%): ${next12prob}`;
   } catch (e: any) {
-    console.error('[fetchWeatherData] Erro:', e?.message);
-    return `=== DADOS METEOROLOGICOS ===
-FALHA ao acessar Open-Meteo API: ${e?.message ?? 'erro desconhecido'}.
-Baseie a analise nas noticias encontradas via busca web.`;
+    console.error('[fetchOpenMeteo]', e?.message);
+    return `=== OPEN-METEO ===\nFalha: ${e?.message}. Sem dados meteorológicos numéricos.`;
   }
 }
 
-function getWmoDescription(code: number): string {
-  const descriptions: Record<number, string> = {
-    0: 'Ceu limpo',
-    1: 'Predominantemente limpo', 2: 'Parcialmente nublado', 3: 'Nublado',
-    45: 'Nevoeiro', 48: 'Nevoeiro com geada',
-    51: 'Garoa leve', 53: 'Garoa moderada', 55: 'Garoa intensa',
-    61: 'Chuva leve', 63: 'Chuva moderada', 65: 'Chuva forte',
-    71: 'Neve leve', 73: 'Neve moderada', 75: 'Neve forte',
-    80: 'Pancadas leves', 81: 'Pancadas moderadas', 82: 'Pancadas violentas',
-    85: 'Neve em pancadas leve', 86: 'Neve em pancadas forte',
-    95: 'Tempestade', 96: 'Tempestade com granizo leve', 99: 'Tempestade com granizo forte',
-  };
-  return descriptions[code] ?? `Codigo WMO ${code}`;
-}
+const WMO_DESCRIPTIONS: Record<number, string> = {
+  0: 'Céu limpo', 1: 'Predominantemente limpo', 2: 'Parcialmente nublado', 3: 'Nublado',
+  45: 'Nevoeiro', 48: 'Nevoeiro com geada',
+  51: 'Garoa leve', 53: 'Garoa moderada', 55: 'Garoa intensa',
+  61: 'Chuva leve', 63: 'Chuva moderada', 65: 'Chuva forte',
+  80: 'Pancadas leves', 81: 'Pancadas moderadas', 82: 'Pancadas violentas',
+  95: 'Tempestade', 96: 'Tempestade com granizo leve', 99: 'Tempestade com granizo forte',
+};
 
-// ── Fase 2: Busca de notícias reais via Google Search Grounding ─────
-async function fetchCrisisNews(currentDateTime: string): Promise<string> {
+// ── 2. INMET — Alertas ativos para MG ───────────────────────────────────────
+async function fetchInmetAlerts(): Promise<string> {
   try {
-    const searchResponse = await ai.generate({
-      model: 'googleai/gemini-2.5-flash',
-      prompt: `Pesquise e resuma as informacoes MAIS RECENTES e VERIFICAVEIS sobre a situacao em Juiz de Fora, MG, Brasil, especificamente:
+    const res = await fetch('https://apitempo.inmet.gov.br/alertas/por-estado/MG', {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(9000),
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const alerts: any[] = await res.json();
 
-1. Chuvas e enchentes: Chuvas intensas, alagamentos, transbordamento de rios (Paraibuna, corregos)
-2. Deslizamentos de terra: Ocorrencias em encostas e morros da cidade
-3. Alertas oficiais: Defesa Civil de Juiz de Fora, CEMADEN, INMET, Prefeitura de Juiz de Fora
-4. Vias interditadas: Ruas e avenidas bloqueadas (especialmente Av. Brasil, Independencia, Rio Branco)
-5. Bairros afetados: Quais bairros tem problemas confirmados
-6. Vitimas e desabrigados: Se ha registro de mortes, feridos ou desabrigados
-7. Nivel dos rios: Monitoramento do Rio Paraibuna e afluentes
-8. Acoes da prefeitura: Abrigos abertos, interdicoes, operacoes de resgate
+    if (!Array.isArray(alerts) || alerts.length === 0) {
+      return '=== ALERTAS INMET (MG) ===\nNenhum alerta meteorológico ativo para Minas Gerais.';
+    }
 
-IMPORTANTE:
-- Cite as FONTES de cada informacao (nome do portal, orgao oficial)
-- Se NAO encontrar noticias recentes de crise, diga EXPLICITAMENTE: "Sem registros de incidentes ativos"
-- Foque em fevereiro de 2026
-- Priorize fontes: Tribuna de Minas, G1 Zona da Mata, Prefeitura JF, Defesa Civil MG, CEMADEN
-
-Data/hora da consulta: ${currentDateTime}`,
-      config: {
-        // For Gemini 2.0+, googleSearchRetrieval: true enables Google Search grounding
-        googleSearchRetrieval: true,
-      },
+    const jf = alerts.filter((a) => {
+      const m = String(a.municipios ?? a.municipio ?? '').toLowerCase();
+      const g = String(a.geocodigo ?? '');
+      return m.includes('juiz de fora') || g.startsWith('3136') || g === JF_IBGE;
     });
 
-    return `=== NOTICIAS E ALERTAS REAIS (Google Search) ===\n${searchResponse.text ?? 'Sem resultados de busca.'}`;
-  } catch (e: any) {
-    console.warn('[fetchCrisisNews] Google Search grounding falhou:', e?.message);
+    const subset = jf.length > 0 ? jf : alerts.slice(0, 6);
+    const tag = jf.length > 0
+      ? 'ALERTAS INMET — JUIZ DE FORA'
+      : 'ALERTAS INMET — MG (sem alerta específico p/ JF)';
 
-    // Fallback: tenta gerar sem grounding se o Search falhou
+    const rows = subset.map((a) =>
+      [
+        `[${(a.tipo_severidade ?? a.nivel ?? 'N/A').toUpperCase()}] ${a.titulo ?? a.descricao_alerta ?? 'sem título'}`,
+        `Municípios: ${a.municipios ?? a.municipio ?? 'N/A'}`,
+        `Período: ${a.data_inicio ?? '?'} → ${a.data_fim ?? '?'}`,
+        `Descrição: ${a.descricao ?? a.descricao_alerta ?? 'N/A'}`,
+      ].join('\n')
+    ).join('\n---\n');
+
+    return `=== ${tag} ===\n${rows}`;
+  } catch (e: any) {
+    console.warn('[fetchInmetAlerts]', e?.message);
+    return `=== ALERTAS INMET ===\nFalha: ${e?.message}.`;
+  }
+}
+
+// ── 3. INMET — Previsão 7 dias para JF (IBGE 3136702) ───────────────────────
+async function fetchInmetForecast(): Promise<string> {
+  try {
+    const res = await fetch(
+      `https://apiprevmet3.inmet.gov.br/previsao/municipio/${JF_IBGE}`,
+      { cache: 'no-store', signal: AbortSignal.timeout(9000), headers: { Accept: 'application/json' } }
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const raw = await res.json();
+
+    const entries: [string, any][] = Array.isArray(raw)
+      ? raw.map((item: any, i: number) => [item.data ?? String(i), item])
+      : Object.entries(raw).filter(([k]) => /^\d{4}-\d{2}-\d{2}$/.test(k));
+
+    if (entries.length === 0) throw new Error('Nenhum dado no retorno da previsão');
+
+    let out = `=== PREVISÃO INMET — Juiz de Fora, MG (IBGE ${JF_IBGE}) ===\n`;
+    for (const [date, day] of entries.slice(0, 7)) {
+      const tarde = day.tarde  ?? day.afternoon ?? {};
+      const manha = day.manha  ?? day.morning   ?? {};
+      const noite = day.noite  ?? day.night     ?? {};
+      const tmax  = day.temp_max ?? tarde.temp_max ?? manha.temp_max ?? '?';
+      const tmin  = day.temp_min ?? noite.temp_min ?? manha.temp_min ?? '?';
+      const cond  = tarde.descricao ?? manha.descricao ?? day.descricao ?? day.description ?? '?';
+      const rain  = day.chuva ?? tarde.chuva ?? manha.chuva ?? '?';
+      const umid  = day.umid_max ?? tarde.umid_max ?? '?';
+      out += `${date}: ${cond} | T: ${tmin}–${tmax}°C | Chuva: ${rain}mm | Umid. máx: ${umid}%\n`;
+    }
+    return out;
+  } catch (e: any) {
+    console.warn('[fetchInmetForecast]', e?.message);
+    return `=== PREVISÃO INMET ===\nFalha: ${e?.message}.`;
+  }
+}
+
+// ── 4. CEMADEN — Pluviometria estações JF ────────────────────────────────────
+async function fetchCemadenData(): Promise<string> {
+  try {
+    const res = await fetch(
+      `http://sjc.salvar.cemaden.gov.br/resources/graficos/pluviometro/getPcds.json?uf=MG&cidade=Juiz%20de%20Fora`,
+      { cache: 'no-store', signal: AbortSignal.timeout(9000) }
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    const stations: any[] = data?.objeto ?? data ?? [];
+    if (!Array.isArray(stations) || stations.length === 0) {
+      return '=== CEMADEN (Pluviometria JF) ===\nNenhuma estação retornada.';
+    }
+
+    const sorted = [...stations].sort(
+      (a, b) => parseFloat(b.acumulado ?? b.valorRecente ?? 0) - parseFloat(a.acumulado ?? a.valorRecente ?? 0)
+    );
+
+    let out = `=== CEMADEN — Estações Pluviométricas Juiz de Fora (${stations.length} estações) ===\n`;
+    for (const st of sorted.slice(0, 10)) {
+      const nome   = st.nomePcd ?? st.nome ?? 'N/A';
+      const acum   = st.acumulado ?? st.valorRecente ?? st.valor ?? '?';
+      const hora   = st.dataHora ?? st.ultimaLeitura ?? '?';
+      const bairro = st.bairro ? ` (${st.bairro})` : '';
+      out += `• ${nome}${bairro}: ${acum}mm — última leitura: ${hora}\n`;
+    }
+    if (sorted[0]) {
+      out += `\nMAIOR ACUMULADO: ${sorted[0].nomePcd ?? sorted[0].nome ?? 'N/A'} com ${sorted[0].acumulado ?? sorted[0].valorRecente ?? '?'}mm`;
+    }
+    return out;
+  } catch (e: any) {
+    console.warn('[fetchCemadenData]', e?.message);
+    return `=== CEMADEN ===\nFalha: ${e?.message}.`;
+  }
+}
+
+// ── 5. Climatempo (opcional — requer CLIMATEMPO_API_TOKEN no .env) ───────────
+async function fetchClimatempoData(): Promise<string> {
+  const token = process.env.CLIMATEMPO_API_TOKEN;
+  if (!token) {
+    return `=== CLIMATEMPO ===\nToken não configurado. Adicione CLIMATEMPO_API_TOKEN ao .env.local para habilitar.`;
+  }
+  try {
+    await fetch(
+      `http://apiadvisor.climatempo.com.br/api/v1/locale/register/${CLIMATEMPO_LOCALE_ID}?token=${token}`,
+      { method: 'PUT', signal: AbortSignal.timeout(6000) }
+    );
+
+    const [currentRes, forecastRes] = await Promise.all([
+      fetch(`http://apiadvisor.climatempo.com.br/api/v1/weather/locale/${CLIMATEMPO_LOCALE_ID}/current?token=${token}`, {
+        cache: 'no-store', signal: AbortSignal.timeout(9000),
+      }),
+      fetch(`http://apiadvisor.climatempo.com.br/api/v1/forecast/locale/${CLIMATEMPO_LOCALE_ID}/days/15?token=${token}`, {
+        cache: 'no-store', signal: AbortSignal.timeout(9000),
+      }),
+    ]);
+
+    let out = `=== CLIMATEMPO — Juiz de Fora, MG ===\n`;
+
+    if (currentRes.ok) {
+      const c = (await currentRes.json())?.data ?? {};
+      out += `Condição: ${c.condition ?? '?'} | Temp: ${c.temperature ?? '?'}°C | Sensação: ${c.sensation ?? '?'}°C\n`;
+      out += `Umidade: ${c.humidity ?? '?'}% | Vento: ${c.wind_velocity ?? '?'} km/h (${c.wind_direction ?? '?'})\n`;
+      out += `Chuva 1h: ${c.rain?.precipitation ?? 0}mm | Prob: ${c.rain?.probability ?? '?'}%\n`;
+    }
+
+    if (forecastRes.ok) {
+      const days: any[] = (await forecastRes.json())?.data ?? [];
+      out += `\nPrevisão Climatempo (até 15 dias):\n`;
+      for (const day of days.slice(0, 10)) {
+        const t   = day.temperature ?? {};
+        const r   = day.rain ?? {};
+        const txt = day.text_icon?.text?.pt ?? day.condition ?? '?';
+        out += `  ${day.date_br ?? day.date}: ${txt} | ${t.min ?? '?'}–${t.max ?? '?'}°C | Chuva: ${r.precipitation ?? 0}mm (prob. ${r.probability ?? '?'}%)\n`;
+      }
+    }
+    return out;
+  } catch (e: any) {
+    console.warn('[fetchClimatempoData]', e?.message);
+    return `=== CLIMATEMPO ===\nFalha: ${e?.message}.`;
+  }
+}
+
+// ── 6. Google Search Grounding — Notícias em tempo real ─────────────────────
+async function fetchLiveNews(currentDateTime: string): Promise<string> {
+  try {
+    const res = await ai.generate({
+      model: 'googleai/gemini-2.5-flash',
+      prompt: `Pesquise AGORA as notícias MAIS RECENTES sobre Juiz de Fora, MG, Brasil. Para cada informação, cite a fonte e data/hora da publicação.
+
+TÓPICOS:
+1. Alertas meteorológicos ativos — INMET, CEMADEN, Defesa Civil JF/MG
+2. Alagamentos e enchentes — Rio Paraibuna, córregos urbanos
+3. Deslizamentos de terra ou encostas em risco
+4. Vias interditadas — Av. Brasil, Av. Independência, Av. Rio Branco, BR-267, BR-040
+5. Bairros afetados — Santa Cândida, Santa Cruz, Floresta, São Mateus, Igrejinha, Progresso, Benfica
+6. Vítimas, desabrigados ou desalojados
+7. Operações da Defesa Civil, Bombeiros, SAMU
+8. Comunicados — Prefeitura de Juiz de Fora (pjf.mg.gov.br)
+9. Nível do Rio Paraibuna
+10. Previsão de chuvas intensas para as próximas 24–48h em JF
+
+INSTRUÇÕES:
+- Se NÃO encontrar registros de crise ativa: escreva "SEM INCIDENTES CONFIRMADOS NO MOMENTO"
+- Priorize eventos de fevereiro de 2026
+- Fontes preferidas: Tribuna de Minas, GZM (G1 Zona da Mata), pjf.mg.gov.br, Defesa Civil MG, cemaden.gov.br, inmet.gov.br
+
+Data/hora da consulta: ${currentDateTime}`,
+      config: { googleSearchRetrieval: true },
+    });
+
+    return `=== NOTÍCIAS E ALERTAS EM TEMPO REAL (Google Search) ===\n${res.text ?? 'Sem resultados.'}`;
+  } catch (e: any) {
+    console.warn('[fetchLiveNews] Search grounding falhou:', e?.message);
     try {
-      const fallbackResponse = await ai.generate({
+      const fallback = await ai.generate({
         model: 'googleai/gemini-2.5-flash',
-        prompt: `Com base no seu conhecimento até à data atual, resuma brevemente o histórico de chuvas e enchentes em Juiz de Fora, MG, Brasil. Se não tem informações específicas para fevereiro de 2026, diga "Sem dados de noticias disponiveis. Analise baseada apenas nos dados meteorologicos.".\n\nData/hora: ${currentDateTime}`,
+        prompt: `Sem acesso à internet neste momento. Liste as áreas historicamente vulneráveis a enchentes e deslizamentos em Juiz de Fora, MG, e riscos esperados no verão. Deixe claro que são dados históricos/contextuais.\nData: ${currentDateTime}`,
       });
-      return `=== NOTICIAS E ALERTAS (sem grounding web) ===\n${fallbackResponse.text ?? 'Sem resultados.'}`;
-    } catch (e2: any) {
-      console.error('[fetchCrisisNews] Fallback também falhou:', e2?.message);
-      return `=== NOTICIAS E ALERTAS ===
-Busca web indisponivel: ${e?.message ?? 'erro desconhecido'}.
-Analise sera baseada apenas nos dados meteorologicos medidos.`;
+      return `=== CONTEXTO CLIMÁTICO HISTÓRICO (sem busca em tempo real) ===\n${fallback.text ?? 'Sem dados.'}`;
+    } catch {
+      return `=== NOTÍCIAS ===\nBusca web indisponível: ${e?.message}.`;
     }
   }
 }
 
-// ── Fase 3: Geração do relatório estruturado factual ────────────────
-export async function generateCrisisReport(input: { currentDateTime: string }): Promise<AiGeneratedCrisisReportOutput> {
+// ── Geração do relatório estruturado ────────────────────────────────────────
+export async function generateCrisisReport(
+  input: { currentDateTime: string }
+): Promise<AiGeneratedCrisisReportOutput> {
   try {
-    // Coleta dados em paralelo: weather (gratuito) + news (via Gemini Search)
-    const [weatherData, crisisNews] = await Promise.all([
-      fetchWeatherData(),
-      fetchCrisisNews(input.currentDateTime),
-    ]);
+    const [openMeteo, inmetAlerts, inmetForecast, cemaden, climatempo, liveNews] =
+      await Promise.all([
+        fetchOpenMeteo(),
+        fetchInmetAlerts(),
+        fetchInmetForecast(),
+        fetchCemadenData(),
+        fetchClimatempoData(),
+        fetchLiveNews(input.currentDateTime),
+      ]);
 
     const { output } = await ai.generate({
       model: 'googleai/gemini-2.5-flash',
       output: { schema: AiGeneratedCrisisReportOutputSchema },
-      prompt: `Voce e o Sistema de Monitoramento Inteligente da Defesa Civil de Juiz de Fora, MG.
-Analise os DADOS REAIS abaixo e gere um boletim ESTRITAMENTE FACTUAL.
+      prompt: `Você é o Sistema de Monitoramento Inteligente da Defesa Civil de Juiz de Fora, MG.
+Analise TODOS os dados reais abaixo e gere um boletim ESTRITAMENTE FACTUAL.
 
-${weatherData}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${openMeteo}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${inmetAlerts}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${inmetForecast}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${cemaden}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${climatempo}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${liveNews}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-${crisisNews}
+REGRAS INVIOLÁVEIS:
 
-===================================================
-REGRAS INVIOLAVEIS PARA O RELATORIO:
-===================================================
+1. NUNCA INVENTE ocorrências. Tempo seco + sem alertas INMET + sem notícias confirmadas → VERDE.
 
-1. NUNCA INVENTE ocorrencias. Se os dados mostram tempo seco e sem noticias de incidentes, o alerta e VERDE.
+2. CRITÉRIOS DE ALERTA:
+   VERDE:    < 10mm/h, acumulado 72h < 50mm, sem alertas oficiais, sem notícias de incidentes
+   AMARELO:  10–25mm/h OU 72h 50–100mm OU alertas preventivos INMET/CEMADEN
+   LARANJA:  > 25mm/h OU 72h > 100mm OU incidentes confirmados por fontes oficiais
+   VERMELHO: múltiplos incidentes graves, vítimas confirmadas, emergência declarada
 
-2. CRITERIOS DE ALERTA baseados em dados tecnicos:
-   VERDE: precipitacao < 10mm/h, acumulado 72h < 50mm, sem incidentes
-   AMARELO: precipitacao 10-25mm/h OU acumulado 72h 50-100mm OU alertas preventivos
-   LARANJA: precipitacao > 25mm/h OU acumulado 72h > 100mm OU incidentes confirmados
-   VERMELHO: multiplos incidentes graves, vitimas, emergencia declarada
+3. FONTE PRIORITÁRIA para o nível de alerta:
+   Alertas INMET oficiais > Notícias verificadas > Dados CEMADEN/Climatempo > Open-Meteo
 
-3. MARKERS devem ter coordenadas REAIS de Juiz de Fora:
-   Centro: lat -21.760, lng -43.350
-   Santa Luzia: lat -21.785, lng -43.340
-   Sao Mateus: lat -21.772, lng -43.355
-   Igrejinha: lat -21.712, lng -43.400
-   Borboleta: lat -21.775, lng -43.370
-   Benfica: lat -21.740, lng -43.355
-   Cascatinha: lat -21.730, lng -43.380
-   Linhares: lat -21.750, lng -43.360
-   Vitorino Braga: lat -21.755, lng -43.345
-   Se NAO ha incidentes confirmados, retorne markers como array VAZIO [].
+4. MARKERS — coordenadas reais de Juiz de Fora:
+   Centro: -21.760, -43.350  |  Santa Luzia: -21.785, -43.340  |  São Mateus: -21.772, -43.355
+   Igrejinha: -21.712, -43.400  |  Borboleta: -21.775, -43.370  |  Benfica: -21.740, -43.355
+   Cascatinha: -21.730, -43.380  |  Progresso: -21.768, -43.362  |  Santa Cândida: -21.795, -43.342
+   Se NÃO há incidentes confirmados → markers = []
 
-4. SUMMARY deve citar dados numericos reais: temperatura, precipitacao medida, acumulados.
+5. SUMMARY: cite números reais — temperatura, precipitação medida, acumulados, alertas INMET ativos.
 
-5. AFFECTED AREAS: Liste APENAS bairros com problemas CONFIRMADOS por dados ou noticias. Se nao ha, retorne array vazio [].
+6. AFFECTED AREAS: apenas bairros com problemas CONFIRMADOS. Se nenhum → array vazio [].
 
-6. RECOMMENDATIONS devem ser praticas e proporcionais ao nivel de alerta real.
+7. Se notícias trouxerem incidentes em bairros específicos, crie markers com coordenadas do bairro.
 
-7. Se a busca web retornou noticias de incidentes, inclua eles nos markers com coordenadas do bairro mencionado.
+8. Nunca use "simulação" ou "dados simulados". Estes são DADOS REAIS e NOTÍCIAS VERIFICADAS.
 
-8. Nunca diga "de acordo com a simulacao" ou "dados simulados". Estes sao DADOS REAIS MEDIDOS.
-
-Data/hora: ${input.currentDateTime}`,
+Data/hora da consulta: ${input.currentDateTime}`,
     });
 
     if (!output) {
-      console.error('[generateCrisisReport] Falha: IA retornou output vazio.');
+      console.error('[generateCrisisReport] output vazio');
       return FALLBACK_REPORT;
     }
 
-    // Validacao de seguranca dos markers (coordenadas dentro de JF)
-    output.markers = (output.markers ?? []).filter(m =>
-      m.lat >= -21.85 && m.lat <= -21.65 &&
-      m.lng >= -43.50 && m.lng <= -43.25 &&
-      m.severity >= 1 && m.severity <= 3
+    output.markers = (output.markers ?? []).filter(
+      (m) =>
+        m.lat >= -21.85 && m.lat <= -21.65 &&
+        m.lng >= -43.50 && m.lng <= -43.25 &&
+        m.severity >= 1 && m.severity <= 3
     );
 
     return output;
-
   } catch (error: any) {
     const status = error?.status ?? error?.code ?? 'unknown';
-    const detail = error?.message ?? String(error);
-    console.error(`[generateCrisisReport] Erro fatal — status=${status}: ${detail}`);
-    // Em caso de erro na geração (ex: API key invalida, erro de rede, quota), retorna fallback
-    const fallbackWithDetails: AiGeneratedCrisisReportOutput = {
-      ...FALLBACK_REPORT,
-      summary: `${FALLBACK_REPORT.summary} Código do erro: ${status}.`,
-    };
-    return fallbackWithDetails;
+    console.error(`[generateCrisisReport] Erro fatal status=${status}:`, error?.message ?? error);
+    return { ...FALLBACK_REPORT, summary: `${FALLBACK_REPORT.summary} Código do erro: ${status}.` };
   }
 }
