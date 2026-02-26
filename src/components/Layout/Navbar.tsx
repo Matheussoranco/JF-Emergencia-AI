@@ -23,9 +23,9 @@ export default function Navbar({ alertLevel = 'VERDE' }: NavbarProps) {
     return () => clearInterval(interval);
   }, []);
 
-  const getAlertStyles = (level: AlertLevel) => {
-    switch (level) {
-      case 'VERDE': return 'bg-emerald-500 text-white border-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.4)]';
+  const getAlertStyles = (currentLevel: AlertLevel) => {
+    switch (currentLevel) {
+      case 'VERDE': return 'bg-emerald-500 text-white border-emerald-300 shadow-[0_0_20px_rgba(16,185,129,0.5)]';
       case 'AMARELO': return 'bg-amber-500 text-black border-amber-400';
       case 'LARANJA': return 'bg-orange-600 text-white border-orange-400';
       case 'VERMELHO': return 'bg-red-600 text-white border-red-400 pulse-red';
@@ -33,8 +33,8 @@ export default function Navbar({ alertLevel = 'VERDE' }: NavbarProps) {
     }
   };
 
-  const getIconColor = (level: AlertLevel) => {
-    switch (level) {
+  const getIconColor = (currentLevel: AlertLevel) => {
+    switch (currentLevel) {
       case 'VERDE': return 'text-emerald-400';
       case 'AMARELO': return 'text-amber-400';
       case 'LARANJA': return 'text-orange-500';
