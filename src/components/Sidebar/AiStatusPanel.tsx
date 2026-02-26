@@ -44,13 +44,22 @@ export default function AiStatusPanel({ onMarkersUpdate, onAlertChange }: AiStat
         setStorageItem(STORAGE_KEYS.LAST_AI_REPORT, { ...enrichedReport, storageTimestamp: new Date().toISOString() });
         setCountdown(REFRESH_INTERVAL);
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Fetch Error:', error);
-      setError("Falha ao atualizar dados. Tente novamente.");
+      const msg = error?.message ?? '';
+      let userMsg = "Falha ao atualizar dados. Tente novamente.";
+      let toastDesc = "Servidor sobrecarregado ou chave de API inválida.";
+      
+      if (msg.includes('API_KEY') || msg.includes('401') || msg.includes('403') || msg.includes('GOOGLE_GENAI_API_KEY')) {
+        userMsg = "Chave da API Gemini não configurada ou inválida.";
+        toastDesc = "Configure GOOGLE_GENAI_API_KEY no arquivo .env.local e reinicie o servidor.";
+      }
+      
+      setError(userMsg);
       toast({ 
         variant: "destructive", 
         title: "Erro de Sincronismo", 
-        description: "Servidor sobrecarregado ou chave de API inválida." 
+        description: toastDesc
       });
     } finally {
       setLoading(false);
