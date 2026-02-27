@@ -98,6 +98,59 @@ function LocateControl() {
   );
 }
 
+// Tile definitions
+const TILES = [
+  {
+    id: 'osm',
+    label: '\uD83D\uDDFA\uFE0F OSM',
+    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  },
+  {
+    id: 'dark',
+    label: '\uD83C\uDF11 Escuro',
+    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    attribution: '&copy; OpenStreetMap &copy; <a href="https://carto.com/">CARTO</a>',
+  },
+  {
+    id: 'sat',
+    label: '\uD83D\uDEF0 Sat\u00e9lite',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    attribution: '&copy; <a href="https://www.esri.com/">Esri</a>',
+  },
+];
+
+// Inline tile-picker control sitting inside the map
+function TilePicker({ tileId, onChange }: { tileId: string; onChange: (id: string) => void }) {
+  return (
+    <div style={{
+      position: 'absolute', bottom: 148, right: 10, zIndex: 1000,
+      display: 'flex', flexDirection: 'column', gap: 4,
+    }}>
+      {TILES.map(t => (
+        <button
+          key={t.id}
+          onClick={() => onChange(t.id)}
+          style={{
+            background: tileId === t.id ? '#dc2626' : '#1e293b',
+            border: '2px solid ' + (tileId === t.id ? '#ef4444' : '#475569'),
+            borderRadius: 6,
+            color: '#fff',
+            fontSize: 9,
+            fontWeight: 900,
+            padding: '3px 7px',
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+            letterSpacing: '0.05em',
+          }}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 interface MapProps {
   reports: CommunityReport[];
   aiMarkers: AiMarker[];
@@ -105,6 +158,8 @@ interface MapProps {
 
 export default function EmergencyMap({ reports, aiMarkers }: MapProps) {
   const [isMounted, setIsMounted] = useState(false);
+  const [tileId, setTileId] = useState('osm');
+  const activeTile = TILES.find(t => t.id === tileId) ?? TILES[0];
 
   useEffect(() => {
     setIsMounted(true);
@@ -123,25 +178,10 @@ export default function EmergencyMap({ reports, aiMarkers }: MapProps) {
       className="w-full h-full"
       zoomControl={false}
     >
+      {/* Single TileLayer — swapped via state to avoid LayersControl.BaseLayer pane bug */}
+      <TileLayer key={activeTile.id} attribution={activeTile.attribution} url={activeTile.url} />
+
       <LayersControl position="topright">
-        <LayersControl.BaseLayer name="🗺️ Padrão (OSM)" checked>
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
-        </LayersControl.BaseLayer>
-        <LayersControl.BaseLayer name="🌑 Escuro (CartoDB)">
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>'
-            url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-          />
-        </LayersControl.BaseLayer>
-        <LayersControl.BaseLayer name="🗺️ Satélite (Esri)">
-          <TileLayer
-            attribution='&copy; <a href="https://www.esri.com/">Esri</a>'
-            url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-          />
-        </LayersControl.BaseLayer>
         {/* ── Zonas de Risco (Circle em metros, escala com o zoom) ── */}
         <LayersControl.Overlay name="⚠️ Zonas de Risco" checked>
           <LayerGroup>
@@ -252,6 +292,8 @@ export default function EmergencyMap({ reports, aiMarkers }: MapProps) {
           </LayerGroup>
         </LayersControl.Overlay>
       </LayersControl>
-      <LocateControl />    </MapContainer>
+      <LocateControl />
+      <TilePicker tileId={tileId} onChange={setTileId} />
+    </MapContainer>
   );
 }

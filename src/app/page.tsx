@@ -85,16 +85,14 @@ export default function Home() {
             </button>
           </div>
 
-          {/* Leaflet interactive map */}
-          <div className={`absolute inset-0 transition-opacity duration-300 ${
-            mapView === 'live' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
-          }`}>
+          {/* Leaflet interactive map — always mounted, never hidden, avoids Leaflet re-init errors */}
+          <div className="absolute inset-0">
             <EmergencyMap reports={reports} aiMarkers={aiMarkers} />
           </div>
 
-          {/* Official Google My Maps — Defesa Civil JF */}
+          {/* Official Google My Maps — overlaid on top when active */}
           <div className={`absolute inset-0 transition-opacity duration-300 ${
-            mapView === 'official' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+            mapView === 'official' ? 'opacity-100 pointer-events-auto z-[500]' : 'opacity-0 pointer-events-none z-[-1]'
           }`}>
             <iframe
               src="https://www.google.com/maps/d/embed?mid=1WONsDYluWx8kJKU5kl5G3fLEdS6u6z0&hl=pt-BR&ehbc=2E312F"
